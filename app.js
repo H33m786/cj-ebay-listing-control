@@ -1,0 +1,991 @@
+const state = {
+  products: [],
+  drafts: [],
+  published: [],
+  selectedDraftId: null,
+  settings: null
+};
+
+const hostedStoreKey = "cj-ebay-listing-control-store";
+const sampleProducts = [
+  {
+    pid: "CJ-BAG-0042",
+    sku: "CJBAG0042",
+    title: "Foldable Travel Organiser Bag",
+    category: "Travel Accessories",
+    warehouse: "GB",
+    cost: 7.8,
+    shipping: 3.45,
+    weight: 420,
+    stock: 184,
+    deliveryDays: 5,
+    image: "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?auto=format&fit=crop&w=900&q=80",
+    variants: ["Black", "Navy", "Grey"],
+    tags: ["trending", "travel", "fashion", "bag", "bags", "luggage", "organiser"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-HOME-1180",
+    sku: "CJHOME1180",
+    title: "Under Sink Expandable Storage Rack",
+    category: "Home Storage",
+    warehouse: "GB",
+    cost: 9.4,
+    shipping: 4.1,
+    weight: 760,
+    stock: 96,
+    deliveryDays: 6,
+    image: "https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=900&q=80",
+    variants: ["White", "Matte Black"],
+    tags: ["trending", "home", "storage", "kitchen", "bathroom", "organiser"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-FIT-2201",
+    sku: "CJFIT2201",
+    title: "Adjustable Resistance Band Set",
+    category: "Fitness",
+    warehouse: "US",
+    cost: 11.7,
+    shipping: 5.3,
+    weight: 890,
+    stock: 61,
+    deliveryDays: 7,
+    image: "https://images.unsplash.com/photo-1598971639058-a8bfe53d9d9d?auto=format&fit=crop&w=900&q=80",
+    variants: ["5 Pack", "11 Pack"],
+    tags: ["fitness", "trending", "exercise", "gym", "home workout"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-ELEC-3900",
+    sku: "CJELEC3900",
+    title: "Magnetic USB Charging Cable",
+    category: "Phone Accessories",
+    warehouse: "CN",
+    cost: 2.1,
+    shipping: 2.8,
+    weight: 65,
+    stock: 430,
+    deliveryDays: 14,
+    image: "https://images.unsplash.com/photo-1603539444875-76e7684265f6?auto=format&fit=crop&w=900&q=80",
+    variants: ["USB-C", "Lightning", "Micro USB"],
+    tags: ["electronics", "trending", "charger", "charging", "cable", "usb", "phone", "gadget"],
+    riskyTerms: ["Lightning"]
+  },
+  {
+    pid: "CJ-FASH-5102",
+    sku: "CJFASH5102",
+    title: "Minimal Crossbody Phone Bag",
+    category: "Fashion Accessories",
+    warehouse: "GB",
+    cost: 5.9,
+    shipping: 2.95,
+    weight: 210,
+    stock: 142,
+    deliveryDays: 4,
+    image: "https://images.unsplash.com/photo-1591561954557-26941169b49e?auto=format&fit=crop&w=900&q=80",
+    variants: ["Black", "Tan", "Cream"],
+    tags: ["fashion", "trending", "bag", "bags", "accessories", "phone bag"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-ELEC-4108",
+    sku: "CJELEC4108",
+    title: "Compact 20W USB-C Wall Charger",
+    category: "Electronics",
+    warehouse: "US",
+    cost: 4.6,
+    shipping: 3.2,
+    weight: 95,
+    stock: 288,
+    deliveryDays: 6,
+    image: "https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=900&q=80",
+    variants: ["White", "Black"],
+    tags: ["electronics", "trending", "charger", "usb-c", "phone", "adapter", "wall charger"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-BEAUTY-7821",
+    sku: "CJBEAUTY7821",
+    title: "Reusable Silicone Facial Cleansing Pads",
+    category: "Beauty",
+    warehouse: "GB",
+    cost: 2.8,
+    shipping: 1.95,
+    weight: 80,
+    stock: 350,
+    deliveryDays: 5,
+    image: "https://images.unsplash.com/photo-1596462502278-27bfdc403348?auto=format&fit=crop&w=900&q=80",
+    variants: ["Pink", "Green", "Clear"],
+    tags: ["trending", "beauty", "skincare", "fashion", "bathroom"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-ELEC-4214",
+    sku: "CJELEC4214",
+    title: "Braided 3-in-1 Fast Charging Cable",
+    category: "Electronics",
+    warehouse: "GB",
+    cost: 3.25,
+    shipping: 2.35,
+    weight: 85,
+    stock: 510,
+    deliveryDays: 4,
+    image: "https://images.unsplash.com/photo-1625948515291-69613efd103f?auto=format&fit=crop&w=900&q=80",
+    variants: ["1m", "2m", "3m"],
+    tags: ["electronics", "trending", "charger", "charging", "cable", "usb", "phone", "tech"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-ELEC-4388",
+    sku: "CJELEC4388",
+    title: "Wireless Charging Stand",
+    category: "Electronics",
+    warehouse: "US",
+    cost: 8.9,
+    shipping: 4.15,
+    weight: 280,
+    stock: 174,
+    deliveryDays: 6,
+    image: "https://images.unsplash.com/photo-1609091839311-d5365f9ff1c5?auto=format&fit=crop&w=900&q=80",
+    variants: ["Black", "White"],
+    tags: ["electronics", "trending", "charger", "wireless", "phone", "desk", "gadget"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-ELEC-4490",
+    sku: "CJELEC4490",
+    title: "LED Desk Lamp With USB Port",
+    category: "Electronics",
+    warehouse: "GB",
+    cost: 10.2,
+    shipping: 4.75,
+    weight: 620,
+    stock: 88,
+    deliveryDays: 5,
+    image: "https://images.unsplash.com/photo-1507473885765-e6ed057f782c?auto=format&fit=crop&w=900&q=80",
+    variants: ["White", "Black", "Silver"],
+    tags: ["electronics", "home", "desk", "lamp", "usb", "office"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-ELEC-4615",
+    sku: "CJELEC4615",
+    title: "Bluetooth Sleep Headband",
+    category: "Electronics",
+    warehouse: "CN",
+    cost: 6.45,
+    shipping: 3.8,
+    weight: 160,
+    stock: 240,
+    deliveryDays: 12,
+    image: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=900&q=80",
+    variants: ["Grey", "Black", "Blue"],
+    tags: ["electronics", "fitness", "travel", "bluetooth", "sleep", "headphones"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-FASH-5204",
+    sku: "CJFASH5204",
+    title: "Ribbed Beanie Hat",
+    category: "Fashion Accessories",
+    warehouse: "GB",
+    cost: 3.1,
+    shipping: 1.95,
+    weight: 110,
+    stock: 330,
+    deliveryDays: 4,
+    image: "https://images.unsplash.com/photo-1576871337622-98d48d1cf531?auto=format&fit=crop&w=900&q=80",
+    variants: ["Black", "Grey", "Khaki"],
+    tags: ["fashion", "trending", "hat", "winter", "accessories"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-FASH-5366",
+    sku: "CJFASH5366",
+    title: "Canvas Tote Bag With Inner Pocket",
+    category: "Fashion Accessories",
+    warehouse: "GB",
+    cost: 4.35,
+    shipping: 2.2,
+    weight: 180,
+    stock: 210,
+    deliveryDays: 5,
+    image: "https://images.unsplash.com/photo-1590874103328-eac38a683ce7?auto=format&fit=crop&w=900&q=80",
+    variants: ["Natural", "Black", "Olive"],
+    tags: ["fashion", "travel", "bag", "bags", "tote", "accessories"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-FASH-5481",
+    sku: "CJFASH5481",
+    title: "Adjustable Nylon Belt Bag",
+    category: "Fashion Accessories",
+    warehouse: "US",
+    cost: 5.7,
+    shipping: 2.85,
+    weight: 190,
+    stock: 166,
+    deliveryDays: 6,
+    image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=900&q=80",
+    variants: ["Black", "Stone", "Green"],
+    tags: ["fashion", "travel", "trending", "bag", "belt bag", "accessories"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-HOME-1299",
+    sku: "CJHOME1299",
+    title: "Drawer Divider Storage Set",
+    category: "Home Storage",
+    warehouse: "GB",
+    cost: 4.95,
+    shipping: 2.65,
+    weight: 250,
+    stock: 260,
+    deliveryDays: 4,
+    image: "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?auto=format&fit=crop&w=900&q=80",
+    variants: ["4 Pack", "8 Pack"],
+    tags: ["home", "trending", "storage", "drawer", "organiser", "bedroom"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-HOME-1350",
+    sku: "CJHOME1350",
+    title: "Self-Adhesive Cable Clips Pack",
+    category: "Home Office",
+    warehouse: "GB",
+    cost: 1.95,
+    shipping: 1.55,
+    weight: 45,
+    stock: 620,
+    deliveryDays: 3,
+    image: "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=900&q=80",
+    variants: ["20 Pack", "40 Pack"],
+    tags: ["home", "electronics", "trending", "cable", "desk", "office", "organiser"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-HOME-1477",
+    sku: "CJHOME1477",
+    title: "Silicone Air Fryer Liner",
+    category: "Kitchen",
+    warehouse: "US",
+    cost: 3.75,
+    shipping: 2.4,
+    weight: 130,
+    stock: 398,
+    deliveryDays: 5,
+    image: "https://images.unsplash.com/photo-1556911220-bff31c812dba?auto=format&fit=crop&w=900&q=80",
+    variants: ["Round", "Square"],
+    tags: ["home", "trending", "kitchen", "cooking", "silicone"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-HOME-1592",
+    sku: "CJHOME1592",
+    title: "Rechargeable Motion Sensor Wardrobe Light",
+    category: "Home Lighting",
+    warehouse: "CN",
+    cost: 5.2,
+    shipping: 3.1,
+    weight: 155,
+    stock: 225,
+    deliveryDays: 11,
+    image: "https://images.unsplash.com/photo-1524484485831-a92ffc0de03f?auto=format&fit=crop&w=900&q=80",
+    variants: ["Warm", "Cool", "Neutral"],
+    tags: ["home", "electronics", "lighting", "wardrobe", "storage", "usb"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-FIT-2320",
+    sku: "CJFIT2320",
+    title: "Non-Slip Yoga Mat Strap",
+    category: "Fitness",
+    warehouse: "GB",
+    cost: 2.6,
+    shipping: 1.85,
+    weight: 70,
+    stock: 405,
+    deliveryDays: 4,
+    image: "https://images.unsplash.com/photo-1599901860904-17e6ed7083a0?auto=format&fit=crop&w=900&q=80",
+    variants: ["Black", "Purple", "Teal"],
+    tags: ["fitness", "yoga", "gym", "exercise", "travel"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-FIT-2417",
+    sku: "CJFIT2417",
+    title: "Grip Strength Trainer Set",
+    category: "Fitness",
+    warehouse: "US",
+    cost: 4.8,
+    shipping: 2.9,
+    weight: 210,
+    stock: 134,
+    deliveryDays: 6,
+    image: "https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?auto=format&fit=crop&w=900&q=80",
+    variants: ["Light", "Medium", "Heavy"],
+    tags: ["fitness", "trending", "gym", "exercise", "hand grip"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-FIT-2582",
+    sku: "CJFIT2582",
+    title: "Cooling Sports Towel",
+    category: "Fitness",
+    warehouse: "GB",
+    cost: 3.4,
+    shipping: 2.15,
+    weight: 120,
+    stock: 312,
+    deliveryDays: 4,
+    image: "https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=900&q=80",
+    variants: ["Blue", "Grey", "Pink"],
+    tags: ["fitness", "travel", "gym", "sport", "summer"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-TRAVEL-6031",
+    sku: "CJTRAVEL6031",
+    title: "Compression Packing Cubes Set",
+    category: "Travel Accessories",
+    warehouse: "GB",
+    cost: 8.6,
+    shipping: 3.35,
+    weight: 360,
+    stock: 153,
+    deliveryDays: 5,
+    image: "https://images.unsplash.com/photo-1553531580-652231dae097?auto=format&fit=crop&w=900&q=80",
+    variants: ["3 Pack", "6 Pack"],
+    tags: ["travel", "trending", "luggage", "organiser", "bags", "packing"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-TRAVEL-6174",
+    sku: "CJTRAVEL6174",
+    title: "Travel Cable Organiser Case",
+    category: "Travel Accessories",
+    warehouse: "GB",
+    cost: 4.9,
+    shipping: 2.45,
+    weight: 150,
+    stock: 280,
+    deliveryDays: 4,
+    image: "https://images.unsplash.com/photo-1516321497487-e288fb19713f?auto=format&fit=crop&w=900&q=80",
+    variants: ["Grey", "Black", "Navy"],
+    tags: ["travel", "electronics", "charger", "cable", "organiser", "bag"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-TRAVEL-6292",
+    sku: "CJTRAVEL6292",
+    title: "Waterproof Toiletry Bag",
+    category: "Travel Accessories",
+    warehouse: "US",
+    cost: 5.35,
+    shipping: 2.95,
+    weight: 220,
+    stock: 201,
+    deliveryDays: 6,
+    image: "https://images.unsplash.com/photo-1556228578-8c89e6adf883?auto=format&fit=crop&w=900&q=80",
+    variants: ["Black", "Beige", "Blue"],
+    tags: ["travel", "fashion", "bathroom", "bag", "luggage"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-BEAUTY-7954",
+    sku: "CJBEAUTY7954",
+    title: "Makeup Brush Cleaning Mat",
+    category: "Beauty",
+    warehouse: "GB",
+    cost: 2.25,
+    shipping: 1.7,
+    weight: 55,
+    stock: 460,
+    deliveryDays: 4,
+    image: "https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=900&q=80",
+    variants: ["Pink", "Black"],
+    tags: ["fashion", "beauty", "trending", "makeup", "skincare"],
+    riskyTerms: []
+  },
+  {
+    pid: "CJ-BEAUTY-8066",
+    sku: "CJBEAUTY8066",
+    title: "Satin Heatless Curling Rod Set",
+    category: "Beauty",
+    warehouse: "US",
+    cost: 4.95,
+    shipping: 2.55,
+    weight: 115,
+    stock: 188,
+    deliveryDays: 6,
+    image: "https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?auto=format&fit=crop&w=900&q=80",
+    variants: ["Pink", "Champagne", "Black"],
+    tags: ["fashion", "beauty", "trending", "hair", "accessories"],
+    riskyTerms: []
+  }
+];
+
+const categoryAliases = {
+  trending: ["trending", "popular", "hot", "viral", "winner"],
+  fashion: ["fashion", "clothes", "clothing", "style", "bags", "bag", "accessories", "beauty"],
+  electronics: ["electronics", "charger", "charging", "cable", "usb", "usb-c", "phone", "adapter", "gadget", "tech"],
+  home: ["home", "storage", "kitchen", "bathroom", "organiser", "organizer", "house"],
+  fitness: ["fitness", "gym", "exercise", "workout", "sport"],
+  travel: ["travel", "luggage", "bag", "bags", "organiser", "organizer"]
+};
+
+const viewCopy = {
+  import: ["Supplier search", "Import CJ products"],
+  drafts: ["Listing review", "Prepare eBay drafts"],
+  published: ["Live catalogue", "Published listings"],
+  settings: ["Setup", "Integration settings"]
+};
+
+const $ = (selector) => document.querySelector(selector);
+
+async function api(path, options = {}) {
+  try {
+    const response = await fetch(path, {
+      headers: { "content-type": "application/json", ...(options.headers || {}) },
+      ...options
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      const error = new Error(body.error || "Request failed");
+      error.body = body;
+      throw error;
+    }
+    return body;
+  } catch (error) {
+    return localApi(path, options, error);
+  }
+}
+
+function money(value) {
+  return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(Number(value || 0));
+}
+
+function readHostedStore() {
+  const fallback = { drafts: [], published: [] };
+  try {
+    return JSON.parse(localStorage.getItem(hostedStoreKey)) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeHostedStore(store) {
+  localStorage.setItem(hostedStoreKey, JSON.stringify(store));
+}
+
+function makeHostedDraft(product) {
+  const landedCost = Number((product.cost + product.shipping).toFixed(2));
+  const price = Number((landedCost * 1.55 + estimateFees(landedCost * 1.55)).toFixed(2));
+  const image = product.image && !isSampleProduct(product) ? product.image : `demo:${primaryProductGroup(product)}`;
+  return {
+    id: crypto.randomUUID(),
+    source: "cj",
+    cjProductId: product.pid,
+    sku: `${product.sku}-${Date.now().toString().slice(-5)}`,
+    title: product.title,
+    description: `${product.title}. Shipped by supplier from ${product.warehouse} warehouse. Confirm shipping estimates before publishing.`,
+    category: product.category,
+    itemSpecifics: {
+      Brand: "Unbranded",
+      Type: product.category,
+      Condition: "New"
+    },
+    warehouse: product.warehouse,
+    quantity: Math.min(product.stock, 10),
+    stock: product.stock,
+    cost: product.cost,
+    shippingCost: product.shipping,
+    salePrice: price,
+    handlingDays: product.deliveryDays > 10 ? 5 : 3,
+    deliveryDays: product.deliveryDays,
+    image,
+    variants: product.variants,
+    riskyTerms: product.riskyTerms,
+    status: "draft",
+    ebayListingId: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+async function localApi(path, options, originalError) {
+  const url = new URL(path, window.location.origin);
+  const store = readHostedStore();
+
+  if (url.pathname === "/api/settings") {
+    return {
+      cjLive: false,
+      ebayLivePublish: false,
+      ebayReady: false,
+      hostedDemo: true,
+      ebayOauth: {
+        environment: "sandbox",
+        clientIdReady: true,
+        clientSecretReady: false,
+        runameReady: true,
+        runame: "Ibraheem_Ali-Ibraheem-CJtoeB-jeurj",
+        marketplaceId: "EBAY_GB",
+        scopes: [
+          "https://api.ebay.com/oauth/api_scope",
+          "https://api.ebay.com/oauth/api_scope/sell.inventory",
+          "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
+          "https://api.ebay.com/oauth/api_scope/sell.account",
+          "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
+          "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+          "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly"
+        ]
+      }
+    };
+  }
+
+  if (url.pathname === "/api/ebay/auth-url") {
+    throw new Error("Open the local desktop app to connect eBay sandbox. The phone demo cannot store your eBay token.");
+  }
+
+  if (url.pathname === "/api/products") {
+    const keyword = url.searchParams.get("keyword")?.toLowerCase() || "";
+    const category = url.searchParams.get("category") || "";
+    const warehouse = url.searchParams.get("warehouse") || "";
+    return {
+      live: false,
+      products: sampleProducts.filter((product) => {
+        const keywordMatch = matchesProduct(product, keyword);
+        const categoryMatch = matchesCategory(product, category);
+        const warehouseMatch = !warehouse || product.warehouse === warehouse;
+        return keywordMatch && categoryMatch && warehouseMatch;
+      })
+    };
+  }
+
+  if (url.pathname === "/api/drafts" && (!options.method || options.method === "GET")) {
+    return store;
+  }
+
+  if (url.pathname === "/api/drafts" && options.method === "POST") {
+    const body = JSON.parse(options.body);
+    const draft = makeHostedDraft(body.product);
+    store.drafts.unshift(draft);
+    writeHostedStore(store);
+    return { draft, validation: validateClient(draft) };
+  }
+
+  const draftMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)(?:\/(validate|publish))?$/);
+  if (draftMatch) {
+    const [, id, action] = draftMatch;
+    const index = store.drafts.findIndex((draft) => draft.id === id);
+    if (index === -1) throw originalError;
+
+    if (options.method === "PATCH" && !action) {
+      store.drafts[index] = { ...store.drafts[index], ...JSON.parse(options.body), updatedAt: new Date().toISOString() };
+      writeHostedStore(store);
+      return { draft: store.drafts[index], validation: validateClient(store.drafts[index]) };
+    }
+
+    if (options.method === "POST" && action === "validate") {
+      return { validation: validateClient(store.drafts[index]) };
+    }
+
+    if (options.method === "POST" && action === "publish") {
+      const validation = validateClient(store.drafts[index]);
+      if (!validation.passed) {
+        const error = new Error("Draft needs review before publishing");
+        error.body = { validation };
+        throw error;
+      }
+      const published = {
+        ...store.drafts[index],
+        status: "published",
+        ebayListingId: `SIM-${Math.floor(1000000000 + Math.random() * 8999999999)}`,
+        publishedMode: "simulated",
+        publishedAt: new Date().toISOString()
+      };
+      store.drafts.splice(index, 1);
+      store.published.unshift(published);
+      writeHostedStore(store);
+      return { published };
+    }
+  }
+
+  throw originalError;
+}
+
+function productHaystack(product) {
+  return [product.title, product.category, product.warehouse, ...(product.tags || [])].join(" ").toLowerCase();
+}
+
+function matchesProduct(product, keyword) {
+  if (!keyword) return true;
+  const haystack = productHaystack(product);
+  const tags = product.tags || [];
+  const terms = keyword.split(/\s+/).filter(Boolean);
+  return terms.every((term) => {
+    if (haystack.includes(term)) return true;
+    return Object.entries(categoryAliases).some(([category, aliases]) => aliases.includes(term) && tags.includes(category));
+  });
+}
+
+function matchesCategory(product, category) {
+  if (!category) return true;
+  const tags = product.tags || [];
+  return tags.includes(category) || product.category.toLowerCase().includes(category);
+}
+
+function setView(name) {
+  document.querySelectorAll(".nav-tab").forEach((button) => button.classList.toggle("active", button.dataset.view === name));
+  document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
+  $(`#${name}View`).classList.add("active");
+  $("#viewEyebrow").textContent = viewCopy[name][0];
+  $("#viewTitle").textContent = viewCopy[name][1];
+}
+
+function renderCounts() {
+  $("#draftCount").textContent = state.drafts.length;
+  $("#publishedCount").textContent = state.published.length;
+}
+
+function renderProducts() {
+  const grid = $("#productGrid");
+  grid.innerHTML = "";
+  if (!state.products.length) {
+    grid.innerHTML = '<div class="empty-state">No CJ products matched this search.</div>';
+    return;
+  }
+
+  const template = $("#productCardTemplate");
+  state.products.forEach((product) => {
+    const node = template.content.cloneNode(true);
+    const card = node.querySelector(".product-card");
+    card.querySelector(".product-media").innerHTML = productVisual(product);
+    card.querySelector(".meta").textContent = `${product.category || product.categoryName || "Unmapped"} / ${product.warehouse || "CJ"}`;
+    card.querySelector("h3").textContent = product.title || product.productNameEn || "Untitled CJ product";
+    card.querySelector("dl").innerHTML = `
+      <div><dt>Cost</dt><dd>${money(product.cost)}</dd></div>
+      <div><dt>Ship</dt><dd>${money(product.shipping)}</dd></div>
+      <div><dt>Stock</dt><dd>${product.stock ?? "Check"}</dd></div>
+      <div><dt>Delivery</dt><dd>${product.deliveryDays ?? "Check"} days</dd></div>
+    `;
+    card.querySelector("button").addEventListener("click", async () => {
+      const result = await api("/api/drafts", {
+        method: "POST",
+        body: JSON.stringify({ product })
+      });
+      state.drafts.unshift(result.draft);
+      state.selectedDraftId = result.draft.id;
+      renderDrafts();
+      renderCounts();
+      setView("drafts");
+    });
+    grid.appendChild(node);
+  });
+}
+
+function renderDrafts() {
+  const list = $("#draftList");
+  list.innerHTML = "";
+  if (!state.drafts.length) {
+    list.innerHTML = '<div class="empty-state">Imported products will appear here as editable eBay drafts.</div>';
+    $("#draftEditor").innerHTML = '<div class="empty-state">Create a draft from the import screen to start reviewing.</div>';
+    return;
+  }
+
+  if (!state.selectedDraftId) state.selectedDraftId = state.drafts[0].id;
+
+  state.drafts.forEach((draft) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = `draft-row ${draft.id === state.selectedDraftId ? "active" : ""}`;
+    row.innerHTML = `<strong>${draft.title}</strong><span>${draft.sku} / ${money(draft.salePrice)} / ${draft.quantity} units</span>`;
+    row.addEventListener("click", () => {
+      state.selectedDraftId = draft.id;
+      renderDrafts();
+    });
+    list.appendChild(row);
+  });
+
+  renderEditor(state.drafts.find((draft) => draft.id === state.selectedDraftId));
+}
+
+function validationMarkup(validation) {
+  const items = [...validation.failures, ...validation.warnings];
+  const status = validation.passed ? "pass" : "fail";
+  return `
+    <section class="validation-box ${status}">
+      <strong>${validation.passed ? "Ready to publish" : "Needs review before publishing"}</strong>
+      ${items.length ? `<ul>${items.map((item) => `<li>${item}</li>`).join("")}</ul>` : ""}
+      <div class="metrics">
+        <div class="metric"><span>Landed</span><strong>${money(validation.landedCost)}</strong></div>
+        <div class="metric"><span>Fees</span><strong>${money(validation.estimatedFees)}</strong></div>
+        <div class="metric"><span>Margin</span><strong>${money(validation.margin)}</strong></div>
+        <div class="metric"><span>Margin %</span><strong>${validation.marginPercent}%</strong></div>
+      </div>
+    </section>
+  `;
+}
+
+function renderEditor(draft) {
+  const editor = $("#draftEditor");
+  if (!draft) {
+    editor.innerHTML = '<div class="empty-state">Select a draft to edit.</div>';
+    return;
+  }
+
+  const validation = validateClient(draft);
+  editor.innerHTML = `
+    <div class="editor-grid">
+      <label class="wide">Title <input name="title" maxlength="80" value="${escapeAttr(draft.title)}" /></label>
+      <label>SKU <input name="sku" value="${escapeAttr(draft.sku)}" /></label>
+      <label>Category <input name="category" value="${escapeAttr(draft.category)}" /></label>
+      <label>Sale price <input name="salePrice" type="number" step="0.01" min="0" value="${draft.salePrice}" /></label>
+      <label>Quantity <input name="quantity" type="number" min="0" value="${draft.quantity}" /></label>
+      <label>Cost <input name="cost" type="number" step="0.01" min="0" value="${draft.cost}" /></label>
+      <label>Shipping cost <input name="shippingCost" type="number" step="0.01" min="0" value="${draft.shippingCost}" /></label>
+      <label>Handling days <input name="handlingDays" type="number" min="1" value="${draft.handlingDays}" /></label>
+      <label>Delivery estimate <input name="deliveryDays" type="number" min="1" value="${draft.deliveryDays}" /></label>
+      <label class="wide">Description <textarea name="description">${escapeHtml(draft.description)}</textarea></label>
+      <label class="wide">Image URL <input name="image" value="${escapeAttr(draft.image)}" /></label>
+    </div>
+    ${validationMarkup(validation)}
+    <div class="editor-actions">
+      <button type="submit">Save draft</button>
+      <button type="button" class="secondary" id="validateButton">Run checks</button>
+      <button type="button" id="publishButton">Publish to eBay</button>
+    </div>
+  `;
+
+  editor.onsubmit = async (event) => {
+    event.preventDefault();
+    await saveDraftFromForm(draft.id);
+  };
+  $("#validateButton").addEventListener("click", async () => {
+    const result = await api(`/api/drafts/${draft.id}/validate`, { method: "POST" });
+    editor.querySelector(".validation-box").outerHTML = validationMarkup(result.validation);
+  });
+  $("#publishButton").addEventListener("click", async () => {
+    await saveDraftFromForm(draft.id);
+    try {
+      const result = await api(`/api/drafts/${draft.id}/publish`, { method: "POST" });
+      state.published.unshift(result.published);
+      state.drafts = state.drafts.filter((item) => item.id !== draft.id);
+      state.selectedDraftId = state.drafts[0]?.id || null;
+      renderCounts();
+      renderDrafts();
+      renderPublished();
+      setView("published");
+    } catch (error) {
+      if (error.body?.validation) {
+        editor.querySelector(".validation-box").outerHTML = validationMarkup(error.body.validation);
+      } else {
+        alert(error.message);
+      }
+    }
+  });
+}
+
+async function saveDraftFromForm(id) {
+  const formData = new FormData($("#draftEditor"));
+  const body = Object.fromEntries(formData.entries());
+  ["salePrice", "quantity", "cost", "shippingCost", "handlingDays", "deliveryDays"].forEach((key) => {
+    body[key] = Number(body[key]);
+  });
+  const result = await api(`/api/drafts/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body)
+  });
+  const index = state.drafts.findIndex((draft) => draft.id === id);
+  state.drafts[index] = result.draft;
+  renderDrafts();
+}
+
+function estimateFees(price) {
+  return Number((price * 0.128 + 0.3).toFixed(2));
+}
+
+function validateClient(draft) {
+  const landed = Number((draft.cost + draft.shippingCost).toFixed(2));
+  const fees = estimateFees(draft.salePrice);
+  const margin = Number((draft.salePrice - landed - fees).toFixed(2));
+  const failures = [];
+  const warnings = [];
+  if (!draft.title || draft.title.length < 12) failures.push("Title needs more detail.");
+  if (draft.title?.length > 80) failures.push("eBay titles should stay within 80 characters.");
+  if (!draft.description || draft.description.length < 40) failures.push("Description is too thin.");
+  if (!draft.category) failures.push("Category is required.");
+  if (draft.quantity < 1) failures.push("Quantity must be at least 1.");
+  if (draft.quantity > draft.stock) failures.push("Quantity is higher than CJ stock.");
+  if (!draft.image) failures.push("At least one image is required.");
+  if (margin <= 0) failures.push("Listing is not profitable after estimated fees.");
+  const marginPercent = draft.salePrice ? Number(((margin / draft.salePrice) * 100).toFixed(1)) : 0;
+  if (marginPercent < 15) warnings.push("Margin is below the 15% target.");
+  if (draft.deliveryDays > 10) warnings.push("Delivery estimate is slow for eBay buyers.");
+  return { passed: failures.length === 0, failures, warnings, landedCost: landed, estimatedFees: fees, margin, marginPercent };
+}
+
+function renderPublished() {
+  const list = $("#publishedList");
+  if (!state.published.length) {
+    list.innerHTML = '<div class="empty-state">Published listings will appear here after drafts pass checks.</div>';
+    return;
+  }
+  list.innerHTML = state.published
+    .map(
+      (item) => `
+      <article class="published-item">
+        ${productVisual(item)}
+        <div>
+          <h3>${escapeHtml(item.title)}</h3>
+          <p class="meta">${item.sku} / ${money(item.salePrice)} / ${item.quantity} units</p>
+          <p class="meta">eBay listing: ${item.ebayListingId}</p>
+        </div>
+        <span class="badge">${item.publishedMode === "simulated" ? "Simulated" : "Live"}</span>
+      </article>
+    `
+    )
+    .join("");
+}
+
+function renderSettings() {
+  const status = $("#settingsStatus");
+  const settings = state.settings || {};
+  const oauth = settings.ebayOauth || {};
+  $("#modeText").textContent = settings.ebayLivePublish
+    ? "Live eBay mode enabled"
+    : settings.hostedDemo
+      ? "Phone demo: local sample data and simulated publishing"
+      : "Safe mode: CJ samples and simulated eBay publishing";
+  status.innerHTML = `
+    <div class="status-line"><strong>CJ live product import</strong><span>${settings.cjLive ? "Ready" : "Sample mode"}</span></div>
+    <div class="status-line"><strong>eBay credential set</strong><span>${settings.ebayReady ? "Ready" : "Missing policy IDs or token"}</span></div>
+    <div class="status-line"><strong>eBay live publishing</strong><span>${settings.ebayLivePublish ? "Enabled" : "Disabled"}</span></div>
+    <div class="status-line"><strong>eBay OAuth app</strong><span>${oauth.clientIdReady && oauth.runameReady ? "Configured" : "Needs App ID/RuName"}</span></div>
+    <div class="status-line"><strong>Client Secret</strong><span>${oauth.clientSecretReady ? "Set locally" : "Paste Cert ID in .env"}</span></div>
+    <div class="oauth-panel">
+      <p><strong>Sandbox RuName</strong><br />${escapeHtml(oauth.runame || "Not set")}</p>
+      <p><strong>Auth Accepted URL</strong><br /><code>http://localhost:5173/auth/ebay/callback</code></p>
+      <p><strong>Auth Declined URL</strong><br /><code>http://localhost:5173/auth/ebay/declined</code></p>
+      <p><strong>Privacy Policy URL</strong><br /><code>https://cj-ebay-listing-control.blue-tide-0631.chatgpt.site/privacy.html</code></p>
+      <button type="button" id="connectEbayButton">Connect eBay Sandbox</button>
+    </div>
+  `;
+  $("#connectEbayButton").addEventListener("click", connectEbaySandbox);
+}
+
+async function connectEbaySandbox() {
+  try {
+    const result = await api("/api/ebay/auth-url");
+    window.location.href = result.url;
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+function isSampleProduct(product) {
+  return String(product.pid || product.cjProductId || "").startsWith("CJ-");
+}
+
+function primaryProductGroup(product) {
+  const tags = product.tags || [];
+  if (tags.includes("electronics") || String(product.image || "").includes("demo:electronics")) return "electronics";
+  if (tags.includes("fashion") || String(product.image || "").includes("demo:fashion")) return "fashion";
+  if (tags.includes("home") || String(product.image || "").includes("demo:home")) return "home";
+  if (tags.includes("fitness") || String(product.image || "").includes("demo:fitness")) return "fitness";
+  if (tags.includes("travel") || String(product.image || "").includes("demo:travel")) return "travel";
+  return "trending";
+}
+
+function productInitials(product) {
+  return String(product.title || product.productNameEn || "CJ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 3)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase();
+}
+
+function productVisual(product) {
+  const title = product.title || product.productNameEn || "CJ product";
+  if (product.image && !String(product.image).startsWith("demo:") && !isSampleProduct(product)) {
+    return `<img src="${escapeAttr(product.image)}" alt="${escapeAttr(title)}" />`;
+  }
+  const group = primaryProductGroup(product);
+  return `
+    <div class="product-visual visual-${group}" role="img" aria-label="${escapeAttr(title)}">
+      <span>${escapeHtml(productInitials(product))}</span>
+      <small>${escapeHtml(group)}</small>
+    </div>
+  `;
+}
+
+function escapeHtml(value = "") {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function escapeAttr(value = "") {
+  return escapeHtml(value).replaceAll("'", "&#039;");
+}
+
+async function loadProducts() {
+  const keyword = encodeURIComponent($("#keywordInput").value);
+  const category = encodeURIComponent($("#categoryInput").value);
+  const warehouse = encodeURIComponent($("#warehouseInput").value);
+  const result = await api(`/api/products?keyword=${keyword}&category=${category}&warehouse=${warehouse}`);
+  state.products = result.products;
+  renderProducts();
+}
+
+async function loadAll() {
+  const [settings, drafts] = await Promise.all([api("/api/settings"), api("/api/drafts")]);
+  state.settings = settings;
+  state.drafts = drafts.drafts;
+  state.published = drafts.published;
+  renderSettings();
+  renderCounts();
+  renderDrafts();
+  renderPublished();
+  await loadProducts();
+}
+
+document.querySelectorAll(".nav-tab").forEach((button) => {
+  button.addEventListener("click", () => setView(button.dataset.view));
+});
+
+$("#searchForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await loadProducts();
+});
+
+$("#categoryInput").addEventListener("change", async () => {
+  syncCategoryChips();
+  await loadProducts();
+});
+
+document.querySelectorAll(".category-chip").forEach((button) => {
+  button.addEventListener("click", async () => {
+    $("#categoryInput").value = button.dataset.category;
+    syncCategoryChips();
+    await loadProducts();
+  });
+});
+
+function syncCategoryChips() {
+  const category = $("#categoryInput").value;
+  document.querySelectorAll(".category-chip").forEach((button) => {
+    button.classList.toggle("active", button.dataset.category === category);
+  });
+}
+
+$("#refreshButton").addEventListener("click", loadAll);
+
+loadAll().catch((error) => {
+  $("#productGrid").innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+});
