@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CJ to eBay Listing Control</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div>
+          <p class="eyebrow">Listing Control</p>
+          <h1>CJ to eBay</h1>
+        </div>
+        <nav class="nav-tabs" aria-label="Workspace">
+          <button class="nav-tab active" data-view="import">Import</button>
+          <button class="nav-tab" data-view="drafts">Drafts <span id="draftCount">0</span></button>
+          <button class="nav-tab" data-view="published">Published <span id="publishedCount">0</span></button>
+          <button class="nav-tab" data-view="settings">Settings</button>
+        </nav>
+        <section class="system-card">
+          <p class="system-label">Mode</p>
+          <p id="modeText">Checking integrations...</p>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="viewEyebrow">Supplier search</p>
+            <h2 id="viewTitle">Import CJ products</h2>
+          </div>
+          <button class="primary-action" id="refreshButton">Refresh</button>
+        </header>
+
+        <section class="view active" id="importView">
+          <form class="toolbar" id="searchForm">
+            <label>
+              Search
+              <input id="keywordInput" name="keyword" placeholder="charger, bags, beauty..." />
+            </label>
+            <label>
+              Category
+              <select id="categoryInput" name="category">
+                <option value="">All categories</option>
+                <option value="trending">Trending</option>
+                <option value="fashion">Fashion</option>
+                <option value="electronics">Electronics</option>
+                <option value="home">Home</option>
+                <option value="fitness">Fitness</option>
+                <option value="travel">Travel</option>
+              </select>
+            </label>
+            <label>
+              Warehouse
+              <select id="warehouseInput" name="warehouse">
+                <option value="">Any</option>
+                <option value="GB">GB</option>
+                <option value="US">US</option>
+                <option value="CN">CN</option>
+              </select>
+            </label>
+            <button type="submit">Search CJ</button>
+          </form>
+          <div class="category-chips" id="categoryChips" aria-label="Browse categories">
+            <button type="button" class="category-chip active" data-category="">All</button>
+            <button type="button" class="category-chip" data-category="trending">Trending</button>
+            <button type="button" class="category-chip" data-category="fashion">Fashion</button>
+            <button type="button" class="category-chip" data-category="electronics">Electronics</button>
+            <button type="button" class="category-chip" data-category="home">Home</button>
+            <button type="button" class="category-chip" data-category="fitness">Fitness</button>
+            <button type="button" class="category-chip" data-category="travel">Travel</button>
+          </div>
+          <div class="product-grid" id="productGrid"></div>
+        </section>
+
+        <section class="view split-view" id="draftsView">
+          <div class="list-panel">
+            <div class="section-heading">
+              <h3>Draft queue</h3>
+              <p>Review each item before it touches eBay.</p>
+            </div>
+            <div class="draft-list" id="draftList"></div>
+          </div>
+          <form class="editor-panel" id="draftEditor">
+            <div class="empty-state">Select a draft to edit title, price, quantity, and listing details.</div>
+          </form>
+        </section>
+
+        <section class="view" id="publishedView">
+          <div class="published-list" id="publishedList"></div>
+        </section>
+
+        <section class="view" id="settingsView">
+          <div class="settings-grid">
+            <section class="settings-panel">
+              <h3>Integration checklist</h3>
+              <div id="settingsStatus"></div>
+            </section>
+            <section class="settings-panel">
+              <h3>Next live steps</h3>
+              <ol>
+                <li>Create eBay developer keys and complete OAuth for the seller account.</li>
+                <li>Set eBay business policies for payment, returns, and fulfilment.</li>
+                <li>Add CJ access token and test product import with a small category.</li>
+                <li>Run eBay sandbox publishing before enabling live publishing.</li>
+              </ol>
+            </section>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <template id="productCardTemplate">
+      <article class="product-card">
+        <div class="product-media"></div>
+        <div class="product-body">
+          <p class="meta"></p>
+          <h3></h3>
+          <dl></dl>
+          <button type="button">Create draft</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

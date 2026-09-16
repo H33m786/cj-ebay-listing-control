@@ -1,0 +1,9 @@
+.env
+data/ebay-oauth-state.json
+data/ebay-token.json
+data/cj-token.json
+deploy-package/
+site.tar.gz
+node_modules/
+.env.*
+!.env.example

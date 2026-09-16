@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: cj-to-ebay
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 22
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_USERNAME
+        sync: false
+      - key: APP_PASSWORD
+        sync: false
+      - key: EBAY_ENV
+        value: sandbox
+      - key: EBAY_LIVE_PUBLISH
+        value: "false"
+      - key: CJ_USE_LIVE
+        value: "true"
