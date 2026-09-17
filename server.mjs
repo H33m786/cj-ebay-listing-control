@@ -2,6 +2,7 @@ import http from "node:http";
 import { readFile as readLocalFile, mkdir, stat } from "node:fs/promises";
 import { createStorage } from "./storage.mjs";
 import { createAccessGuard } from "./access.mjs";
+import { accountRequestUrl, ebayErrorMessage } from "./ebay-request.mjs";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -1203,15 +1204,13 @@ async function refreshEbayToken(token) {
 
 async function getUsableEbayToken() {
   const token = await readEbayToken();
-  if (!token?.access_token) throw new Error("Connect eBay Sandbox before checking account setup.");
+  if (!token?.access_token) throw new Error("Connect eBay before checking account setup.");
+  if (token.environment !== ebayEnvironment()) throw new Error("Reconnect eBay for the selected environment before checking account setup.");
   return ebayTokenIsFresh(token) ? token : refreshEbayToken(token);
 }
 
 async function ebayApi(pathname, token, options = {}) {
-  const url = new URL(pathname, ebayApiBaseUrl());
-  if (!url.searchParams.has("marketplace_id") && pathname.includes("/sell/account/")) {
-    url.searchParams.set("marketplace_id", process.env.EBAY_MARKETPLACE_ID || "EBAY_GB");
-  }
+  const url = accountRequestUrl(pathname, ebayApiBaseUrl(), process.env.EBAY_MARKETPLACE_ID || "EBAY_GB", options.method || "GET");
   const response = await fetch(url, {
     method: options.method || "GET",
     headers: {
@@ -1227,17 +1226,6 @@ async function ebayApi(pathname, token, options = {}) {
   const body = text ? JSON.parse(text) : {};
   if (!response.ok) throw new Error(ebayErrorMessage(body, response.status));
   return body;
-}
-
-function ebayErrorMessage(body, status) {
-  const errors = Array.isArray(body?.errors) ? body.errors : [];
-  if (errors.length) {
-    return errors
-      .map((error) => error.longMessage || error.message || error.errorId)
-      .filter(Boolean)
-      .join(" ");
-  }
-  return body?.message || body?.error_description || body?.error || `eBay API failed with ${status}`;
 }
 
 async function optIntoEbaySellingPolicies() {

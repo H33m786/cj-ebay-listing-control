@@ -1052,14 +1052,19 @@ async function checkEbaySetup() {
 
 async function optIntoPolicies() {
   const results = $("#ebaySetupResults");
-  results.innerHTML = '<p class="inline-status">Opting sandbox seller into business policies...</p>';
+  results.innerHTML = '<p class="inline-status">Opting seller into business policies...</p>';
   try {
     await api("/api/ebay/opt-in-selling-policies", { method: "POST" });
-    results.innerHTML = '<p class="inline-status">Opted in. Checking eBay setup again...</p>';
+  } catch (error) {
+    results.innerHTML = `<p class="inline-status">Business policy opt-in failed: ${escapeHtml(error.message)}</p>`;
+    return;
+  }
+  results.innerHTML = '<p class="inline-status">Opted in. Checking eBay setup again...</p>';
+  try {
     state.ebayAccountSetup = await api("/api/ebay/account-setup");
     renderEbaySetupResults();
   } catch (error) {
-    results.innerHTML = `<p class="inline-status">${escapeHtml(error.message)}</p>`;
+    results.innerHTML = `<p class="inline-status">Business policy opt-in succeeded, but the account setup check failed: ${escapeHtml(error.message)}</p>`;
   }
 }
 
