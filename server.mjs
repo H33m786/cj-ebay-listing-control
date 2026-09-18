@@ -1,4 +1,5 @@
 import http from "node:http";
+import { linkedEbayProfile, identityScope, refreshScopes } from "./ebay-profile.mjs";
 import { fetchOrders } from "./orders.mjs";
 import { dailyDue, trackingSettings, runTracking, assertTrackingConnection } from "./repricing.mjs";
 import { readFile as readLocalFile, mkdir, stat } from "node:fs/promises";
@@ -28,6 +29,7 @@ const { readFile, writeFile, withJobLock } = await createStorage(dataDir, proces
 const jsonHeaders = { "content-type": "application/json; charset=utf-8" };
 const htmlHeaders = { "content-type": "text/html; charset=utf-8" };
 const ebayScopes = [
+  identityScope,
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
   "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
@@ -1195,7 +1197,7 @@ async function refreshEbayToken(token) {
     body: new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: token.refresh_token,
-      scope: ebayScopes.join(" ")
+      scope: refreshScopes(token, ebayScopes)
     })
   });
   const body = await response.json();
@@ -1341,7 +1343,7 @@ async function exchangeEbayCode(code, returnedState) {
         refresh_token: token.refresh_token,
         expires_in: token.expires_in,
         refresh_token_expires_in: token.refresh_token_expires_in,
-        scope: token.scope,
+        scope: token.scope || ebayScopes.join(" "),
         savedAt: new Date().toISOString()
       },
       null,
@@ -1707,6 +1709,9 @@ async function handleApi(req, res, url) {
     if (req.method === "GET" && url.pathname === "/api/settings") {
       const ebayConfig = ebayConfigStatus();
       const ebayToken = await ebayTokenStatus();
+      const ebayProfile = ebayToken.connected
+        ? await linkedEbayProfile(ebayEnvironment(), getUsableEbayToken)
+        : { username: null, message: "Not connected yet" };
       const cjToken = await cjTokenStatus();
       sendJson(res, 200, {
         cjLive: process.env.CJ_USE_LIVE === "true" && cjToken.connected,
@@ -1720,6 +1725,7 @@ async function handleApi(req, res, url) {
             process.env.EBAY_RETURN_POLICY_ID &&
             process.env.EBAY_FULFILLMENT_POLICY_ID
         ),
+        ebayProfile,
         ebayOauth: ebayConfig,
         ebayToken
       });

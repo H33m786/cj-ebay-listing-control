@@ -1069,6 +1069,8 @@ function renderSettings() {
   const settings = state.settings || {};
   const oauth = settings.ebayOauth || {};
   const ebayToken = settings.ebayToken || {};
+  const ebayProfile = settings.ebayProfile || {};
+  const environmentLabel = oauth.environment === "production" ? "Production" : "Sandbox";
   const cjToken = settings.cjToken || {};
   const tokenSaved = ebayToken.savedAt ? new Date(ebayToken.savedAt).toLocaleString() : "Not connected yet";
   const cjExpires = cjToken.expiresAt ? new Date(cjToken.expiresAt).toLocaleString() : "Not connected yet";
@@ -1078,14 +1080,15 @@ function renderSettings() {
       : "Live eBay mode enabled"
     : settings.hostedDemo
       ? "Phone demo: local sample data and simulated publishing"
-      : "Safe mode: CJ samples and simulated eBay publishing";
+      : `${settings.cjLive ? "Live CJ import" : "CJ samples"}; eBay publishing disabled`;
   status.innerHTML = `
     <div class="status-line"><strong>CJ live product import</strong><span>${settings.cjLive ? "Ready" : "Sample mode"}</span></div>
     <div class="status-line"><strong>CJ API key</strong><span>${cjToken.apiKeyReady ? "Set locally" : "Add CJ_API_KEY to .env"}</span></div>
     <div class="status-line"><strong>CJ access token</strong><span>${cjToken.connected ? `Connected ${cjExpires}` : "Not connected yet"}</span></div>
     <div class="status-line"><strong>eBay OAuth app</strong><span>${oauth.clientIdReady && oauth.runameReady ? "Configured" : "Needs App ID/RuName"}</span></div>
     <div class="status-line"><strong>Client Secret</strong><span>${oauth.clientSecretReady ? "Set locally" : "Paste Cert ID in .env"}</span></div>
-    <div class="status-line"><strong>eBay sandbox account</strong><span>${ebayToken.connected ? `Connected ${tokenSaved}` : "Not connected yet"}</span></div>
+    <div class="status-line"><strong>eBay ${environmentLabel} account</strong><span>${ebayToken.connected ? `Connected ${tokenSaved}` : "Not connected yet"}</span></div>
+    <div class="status-line"><strong>Linked eBay account</strong><span id="linkedEbayAccount">${escapeHtml(ebayProfile.username || ebayProfile.message || (ebayToken.connected ? "Account name unavailable. Refresh to retry." : "Not connected yet"))}</span></div>
     <div class="status-line"><strong>eBay publish requirements</strong><span>${settings.ebayReady ? "Ready" : "Needs OAuth token and policy IDs"}</span></div>
     <div class="status-line"><strong>eBay ${oauth.environment === "sandbox" ? "sandbox" : "live"} publishing</strong><span>${settings.ebayLivePublish ? "Enabled" : "Disabled"}</span></div>
     ${
@@ -1099,11 +1102,11 @@ function renderSettings() {
       <p id="cjConnectStatus" class="inline-status"></p>
     </div>
     <div class="oauth-panel">
-      <p><strong>Sandbox RuName</strong><br />${escapeHtml(oauth.runame || "Not set")}</p>
+      <p><strong>${environmentLabel} RuName</strong><br />${escapeHtml(oauth.runame || "Not set")}</p>
       <p><strong>Auth Accepted URL</strong><br /><code>http://localhost:5173/auth/ebay/callback</code></p>
       <p><strong>Auth Declined URL</strong><br /><code>http://localhost:5173/auth/ebay/declined</code></p>
       <p><strong>Privacy Policy URL</strong><br /><code>https://YOUR-GITHUB-USERNAME.github.io/cj-ebay-listing-control/privacy.html</code></p>
-      <button type="button" id="connectEbayButton">Connect eBay Sandbox</button>
+      <button type="button" id="connectEbayButton">${ebayToken.connected ? "Reconnect" : "Connect"} eBay ${environmentLabel}</button>
       <button type="button" id="checkEbaySetupButton">Check eBay setup</button>
       <button type="button" id="optInPoliciesButton">Opt into eBay business policies</button>
       <div class="manual-oauth">
@@ -1170,7 +1173,7 @@ async function connectEbaySandbox() {
 
 async function checkEbaySetup() {
   const results = $("#ebaySetupResults");
-  results.innerHTML = '<p class="inline-status">Checking eBay sandbox setup...</p>';
+  results.innerHTML = '<p class="inline-status">Checking eBay account setup...</p>';
   try {
     state.ebayAccountSetup = await api("/api/ebay/account-setup");
     renderEbaySetupResults();

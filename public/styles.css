@@ -567,6 +567,12 @@ dd {
   border-bottom: 0;
 }
 
+#linkedEbayAccount {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
 .oauth-panel {
   margin-top: 16px;
   border: 1px solid var(--line);
