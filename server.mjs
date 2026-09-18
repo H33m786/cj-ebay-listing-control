@@ -4,6 +4,7 @@ import { createStorage } from "./storage.mjs";
 import { createAccessGuard } from "./access.mjs";
 import { accountRequestUrl, ebayErrorMessage } from "./ebay-request.mjs";
 import { draftPricing } from "./public/pricing.js";
+import { normalizeQuotes } from "./cj-quotes.mjs";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -905,7 +906,7 @@ async function enrichProductForDraft(product) {
 
   const body = await response.json();
   const detail = body.data || {};
-  return normalizeCjProduct({ ...product, ...detail });
+  return normalizeCjProduct({ ...product, ...detail, cost: detail.sellPrice ?? product.cost });
 }
 
 function productHaystack(product) {
@@ -1442,6 +1443,28 @@ function escapeHtml(value = "") {
 
 async function handleApi(req, res, url) {
   try {
+    if (req.method === "POST" && url.pathname === "/api/cj/price-quote") {
+      const input = await readBody(req);
+      if (!input.pid || !input.vid) {
+        sendJson(res, 400, { error: "Select a CJ variant first." });
+        return;
+      }
+      const token = await getUsableCjToken();
+      const detailResponse = await fetch(`https://developers.cjdropshipping.com/api2.0/v1/product/query?pid=${encodeURIComponent(input.pid)}`, { headers: { "CJ-Access-Token": token } });
+      const detail = await detailResponse.json();
+      if (!detailResponse.ok || detail.code !== 200) throw new Error(detail.message || "CJ product lookup failed.");
+      const variant = (detail.data?.variants || []).find((item) => item.vid === input.vid);
+      if (!variant || variant.variantSellPrice == null || !Number.isFinite(Number(variant.variantSellPrice))) throw new Error("CJ did not return a price for this variant.");
+      const freightResponse = await fetch("https://developers.cjdropshipping.com/api2.0/v1/logistic/freightCalculate", {
+        method: "POST",
+        headers: { "CJ-Access-Token": token, "content-type": "application/json" },
+        body: JSON.stringify({ startCountryCode: "CN", endCountryCode: "GB", ...(input.postcode ? { zip: String(input.postcode).trim() } : {}), products: [{ vid: variant.vid, quantity: 1 }] })
+      });
+      const freight = await freightResponse.json();
+      const shippingError = !freightResponse.ok || freight.code !== 200 ? freight.message || "CJ shipping quote failed." : null;
+      sendJson(res, 200, { cost: Number(variant.variantSellPrice), currency: "USD", variantId: variant.vid, quotes: shippingError ? [] : normalizeQuotes(freight.data), shippingError, origin: "CN", destination: "GB", quantity: 1, quotedAt: new Date().toISOString() });
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/api/ebay/locations/cj-jinhua") {
       const token = await getUsableEbayToken();
       const key = "CJ_CN_JINHUA";

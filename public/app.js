@@ -803,6 +803,12 @@ function renderEditor(draft) {
       <label class="wide">Title <input name="title" maxlength="80" value="${escapeAttr(draft.title)}" /></label>
       <label>SKU <input name="sku" value="${escapeAttr(draft.sku)}" /></label>
       <label>Category <input name="category" value="${escapeAttr(draft.category)}" /></label>
+      ${Array.isArray(draft.variants) && draft.variants.some((item) => item?.vid) ? `
+      <label class="wide">CJ size / colour <select name="cjVariantId" id="cjVariantSelect"><option value="">Select variant</option>${draft.variants.filter((item) => item?.vid).map((item) => `<option value="${escapeAttr(item.vid)}" ${draft.cjVariantId === item.vid ? "selected" : ""}>${escapeHtml(item.variantKey || item.variantNameEn || item.variantSku)}</option>`).join("")}</select></label>
+      <label>UK destination postcode (optional) <input name="quotePostcode" value="${escapeAttr(draft.quotePostcode || "")}" /></label>
+      <label>China to UK shipping (one item) <select name="cjShippingService" id="cjShippingSelect"><option value="${escapeAttr(draft.cjShippingService || "")}">${escapeHtml(draft.cjShippingService || "Select variant first")}</option></select></label>
+      <button type="button" id="refreshCjQuoteButton">Refresh CJ prices</button>
+      <p class="wide inline-status" id="cjQuoteStatus"></p>` : ""}
       <label>Sale price (GBP) <input name="salePrice" type="number" step="0.01" min="0" value="${draft.salePrice}" /></label>
       <label>Quantity <input name="quantity" type="number" min="0" value="${draft.quantity}" /></label>
       <label>Supplier cost currency <select name="costCurrency"><option value="USD" ${(draft.costCurrency || (String(draft.cjProductId).startsWith("CJ-") ? "GBP" : "USD")) === "USD" ? "selected" : ""}>USD</option><option value="GBP" ${(draft.costCurrency || (String(draft.cjProductId).startsWith("CJ-") ? "GBP" : "USD")) === "GBP" ? "selected" : ""}>GBP</option></select></label>
@@ -831,6 +837,51 @@ function renderEditor(draft) {
   };
   editor.oninput = refreshPricing;
   editor.onchange = refreshPricing;
+  const variantSelect = editor.querySelector("#cjVariantSelect");
+  if (variantSelect) {
+    let requestNumber = 0;
+    let quotes = [];
+    const shippingSelect = editor.querySelector("#cjShippingSelect");
+    const quoteStatus = editor.querySelector("#cjQuoteStatus");
+    const applyShipping = () => {
+      const quote = quotes.find((item) => item.name === shippingSelect.value);
+      editor.elements.shippingCost.value = quote ? quote.price : "";
+      editor.elements.pricingReviewed.checked = false;
+      refreshPricing();
+    };
+    const refreshQuote = async () => {
+      const currentRequest = ++requestNumber;
+      const previousService = shippingSelect.value || draft.cjShippingService;
+      quotes = [];
+      shippingSelect.innerHTML = '<option value="">Fetching shipping options...</option>';
+      editor.elements.cost.value = "";
+      editor.elements.shippingCost.value = "";
+      editor.elements.pricingReviewed.checked = false;
+      refreshPricing();
+      if (!variantSelect.value) { quoteStatus.textContent = "Select a variant."; return; }
+      quoteStatus.textContent = "Fetching CJ item price and UK shipping quotes...";
+      try {
+        const response = await fetch("/api/cj/price-quote", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pid: draft.cjProductId, vid: variantSelect.value, postcode: editor.elements.quotePostcode.value }) });
+        const result = await response.json();
+        if (currentRequest !== requestNumber) return;
+        if (!response.ok) throw new Error(result.error || "CJ quote failed.");
+        editor.elements.cost.value = result.cost;
+        editor.elements.costCurrency.value = "USD";
+        quotes = result.quotes || [];
+        shippingSelect.innerHTML = '<option value="">Select shipping service</option>' + quotes.map((quote) => `<option value="${escapeAttr(quote.name)}">${escapeHtml(quote.name)} - ${money(quote.price, "USD")} (${escapeHtml(quote.transit)} days)</option>`).join("");
+        const selected = quotes.find((quote) => quote.name === previousService) || quotes.find((quote) => /luwei.*ordinary/i.test(quote.name));
+        if (selected) shippingSelect.value = selected.name;
+        applyShipping();
+        quoteStatus.textContent = result.shippingError || (quotes.length ? "CJ quote: one item, China to UK. Processing time is additional; checkout charges may vary." : "CJ returned no shipping options. Enter a confirmed shipping quote manually.");
+      } catch (error) {
+        if (currentRequest === requestNumber) quoteStatus.textContent = error.message;
+      }
+    };
+    variantSelect.addEventListener("change", refreshQuote);
+    shippingSelect.addEventListener("change", applyShipping);
+    editor.elements.quotePostcode.addEventListener("change", refreshQuote);
+    editor.querySelector("#refreshCjQuoteButton").addEventListener("click", refreshQuote);
+  }
   editor.onsubmit = async (event) => {
     event.preventDefault();
     try {
