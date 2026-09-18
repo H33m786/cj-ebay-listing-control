@@ -1441,6 +1441,32 @@ function escapeHtml(value = "") {
 
 async function handleApi(req, res, url) {
   try {
+    if (req.method === "POST" && url.pathname === "/api/ebay/locations/cj-jinhua") {
+      const token = await getUsableEbayToken();
+      const key = "CJ_CN_JINHUA";
+      const locationPath = `/sell/inventory/v1/location/${key}`;
+      const result = await ebayApi("/sell/inventory/v1/location?limit=100", token);
+      const existing = (result.locations || []).find((item) => item.merchantLocationKey === key);
+      if (existing) {
+        const address = existing.location?.address || {};
+        if (address.country !== "CN" || address.city !== "Jinhua" || address.stateOrProvince !== "Zhejiang" || existing.merchantLocationStatus !== "ENABLED") {
+          sendJson(res, 409, { error: "This location key already exists with different details or is disabled. Review it before using it." });
+          return;
+        }
+      } else {
+        await ebayApi(locationPath, token, {
+          method: "POST",
+          body: {
+            name: "CJ Jinhua dispatch",
+            merchantLocationStatus: "ENABLED",
+            locationTypes: ["WAREHOUSE"],
+            location: { address: { city: "Jinhua", stateOrProvince: "Zhejiang", country: "CN" } }
+          }
+        });
+      }
+      sendJson(res, 200, { merchantLocationKey: key, environment: ebayEnvironment(), created: !existing });
+      return;
+    }
     if (url.pathname === "/api/ebay/marketplace-account-deletion") {
       if (req.method === "GET") {
         const challengeCode = url.searchParams.get("challenge_code");

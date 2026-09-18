@@ -1000,6 +1000,11 @@ function renderSettings() {
       <button type="button" id="connectEbayButton">Connect eBay Sandbox</button>
       <button type="button" id="checkEbaySetupButton">Check eBay setup</button>
       <button type="button" id="optInPoliciesButton">Opt into eBay business policies</button>
+      <div class="manual-oauth">
+        <p><strong>CJ dispatch location</strong><br />Jinhua, Zhejiang, China</p>
+        <button type="button" id="registerCjLocationButton">Register Jinhua location</button>
+        <p id="cjLocationStatus" class="inline-status"></p>
+      </div>
       <div id="ebaySetupResults" class="setup-results"></div>
       <div class="manual-oauth">
         <label for="manualEbayCode">If eBay does not redirect back, paste the final eBay URL or authorization code here</label>
@@ -1013,8 +1018,26 @@ function renderSettings() {
   $("#connectEbayButton").addEventListener("click", connectEbaySandbox);
   $("#checkEbaySetupButton").addEventListener("click", checkEbaySetup);
   $("#optInPoliciesButton").addEventListener("click", optIntoPolicies);
+  $("#registerCjLocationButton").addEventListener("click", registerCjLocation);
   $("#exchangeEbayCodeButton").addEventListener("click", exchangeEbayCodeManually);
   renderEbaySetupResults();
+}
+
+async function registerCjLocation() {
+  const button = $("#registerCjLocationButton");
+  const status = $("#cjLocationStatus");
+  button.disabled = true;
+  status.textContent = "Registering location...";
+  try {
+    const response = await fetch("/api/ebay/locations/cj-jinhua", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Location registration failed.");
+    status.textContent = `Registered in ${result.environment}. Set EBAY_MERCHANT_LOCATION_KEY to ${result.merchantLocationKey} in Render, then save and deploy.`;
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function connectCjApi() {
