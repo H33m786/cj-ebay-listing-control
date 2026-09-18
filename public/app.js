@@ -1070,6 +1070,12 @@ function renderSettings() {
   const oauth = settings.ebayOauth || {};
   const ebayToken = settings.ebayToken || {};
   const ebayProfile = settings.ebayProfile || {};
+  const publishingSetup = settings.ebayPublishingSetup;
+  const publishingStatus = publishingSetup
+    ? !publishingSetup.connectionReady ? "Connect eBay for this environment"
+      : publishingSetup.missing.length ? "Missing publishing selections: " + publishingSetup.missing.join(", ")
+      : "Configured"
+    : settings.ebayReady ? "Configured" : "Publishing selections not confirmed";
   const environmentLabel = oauth.environment === "production" ? "Production" : "Sandbox";
   const cjToken = settings.cjToken || {};
   const tokenSaved = ebayToken.savedAt ? new Date(ebayToken.savedAt).toLocaleString() : "Not connected yet";
@@ -1089,7 +1095,8 @@ function renderSettings() {
     <div class="status-line"><strong>Client Secret</strong><span>${oauth.clientSecretReady ? "Set locally" : "Paste Cert ID in .env"}</span></div>
     <div class="status-line"><strong>eBay ${environmentLabel} account</strong><span>${ebayToken.connected ? `Connected ${tokenSaved}` : "Not connected yet"}</span></div>
     <div class="status-line"><strong>Linked eBay account</strong><span id="linkedEbayAccount">${escapeHtml(ebayProfile.username || ebayProfile.message || (ebayToken.connected ? "Account name unavailable. Refresh to retry." : "Not connected yet"))}</span></div>
-    <div class="status-line"><strong>eBay publish requirements</strong><span>${settings.ebayReady ? "Ready" : "Needs OAuth token and policy IDs"}</span></div>
+    <div class="status-line"><strong>Publishing setup</strong><span>${escapeHtml(publishingStatus)}</span></div>
+    ${(publishingSetup?.selections || []).map(item => `<div class="status-line"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.value || "Not selected in hosted app")}</span></div>`).join("")}
     <div class="status-line"><strong>eBay ${oauth.environment === "sandbox" ? "sandbox" : "live"} publishing</strong><span>${settings.ebayLivePublish ? "Enabled" : "Disabled"}</span></div>
     ${
       oauth.environment === "production"

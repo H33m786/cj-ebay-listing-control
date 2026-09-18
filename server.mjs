@@ -1,4 +1,5 @@
 import http from "node:http";
+import { publishingSetup } from "./ebay-setup.mjs";
 import { linkedEbayProfile, identityScope, refreshScopes } from "./ebay-profile.mjs";
 import { fetchOrders } from "./orders.mjs";
 import { dailyDue, trackingSettings, runTracking, assertTrackingConnection } from "./repricing.mjs";
@@ -1709,6 +1710,7 @@ async function handleApi(req, res, url) {
     if (req.method === "GET" && url.pathname === "/api/settings") {
       const ebayConfig = ebayConfigStatus();
       const ebayToken = await ebayTokenStatus();
+      const ebayPublishingSetup = publishingSetup(process.env, ebayToken, ebayEnvironment());
       const ebayProfile = ebayToken.connected
         ? await linkedEbayProfile(ebayEnvironment(), getUsableEbayToken)
         : { username: null, message: "Not connected yet" };
@@ -1718,13 +1720,8 @@ async function handleApi(req, res, url) {
         cjToken,
         ebayLivePublish: process.env.EBAY_LIVE_PUBLISH === "true",
         ebayProductionConfirmed: process.env.EBAY_PRODUCTION_CONFIRM === "REAL_LISTINGS_ENABLED",
-        ebayReady: Boolean(
-          ebayToken.connected &&
-            process.env.EBAY_MERCHANT_LOCATION_KEY &&
-            process.env.EBAY_PAYMENT_POLICY_ID &&
-            process.env.EBAY_RETURN_POLICY_ID &&
-            process.env.EBAY_FULFILLMENT_POLICY_ID
-        ),
+        ebayReady: ebayPublishingSetup.ready,
+        ebayPublishingSetup,
         ebayProfile,
         ebayOauth: ebayConfig,
         ebayToken
