@@ -1,4 +1,6 @@
 import http from "node:http";
+import { fetchOrders } from "./orders.mjs";
+import { dailyDue, trackingSettings, runTracking, assertTrackingConnection } from "./repricing.mjs";
 import { readFile as readLocalFile, mkdir, stat } from "node:fs/promises";
 import { createStorage } from "./storage.mjs";
 import { createAccessGuard } from "./access.mjs";
@@ -21,7 +23,7 @@ const cjTokenPath = path.join(dataDir, "cj-token.json");
 const statePath = path.join(dataDir, "ebay-oauth-state.json");
 const port = Number(process.env.PORT || 5173);
 const accessGuard = createAccessGuard(process.env);
-const { readFile, writeFile } = await createStorage(dataDir, process.env.DATABASE_URL);
+const { readFile, writeFile, withJobLock } = await createStorage(dataDir, process.env.DATABASE_URL);
 
 const jsonHeaders = { "content-type": "application/json; charset=utf-8" };
 const htmlHeaders = { "content-type": "text/html; charset=utf-8" };
@@ -1222,6 +1224,7 @@ async function getUsableEbayToken() {
 async function ebayApi(pathname, token, options = {}) {
   const url = accountRequestUrl(pathname, ebayApiBaseUrl(), process.env.EBAY_MARKETPLACE_ID || "EBAY_GB", options.method || "GET");
   const response = await fetch(url, {
+    signal: AbortSignal.timeout(20000),
     method: options.method || "GET",
     headers: {
       authorization: `Bearer ${token.access_token}`,
@@ -1332,6 +1335,7 @@ async function exchangeEbayCode(code, returnedState) {
     JSON.stringify(
       {
         environment: ebayEnvironment(),
+        connectionId: crypto.randomUUID(),
         token_type: token.token_type,
         access_token: token.access_token,
         refresh_token: token.refresh_token,
@@ -1449,28 +1453,83 @@ function escapeHtml(value = "") {
     .replaceAll('"', "&quot;");
 }
 
+async function cjPriceQuote(input) {
+  if (!input.pid || !input.vid) throw new Error("Select a CJ variant first.");
+  const token = await getUsableCjToken();
+  const detailResponse = await fetch(`https://developers.cjdropshipping.com/api2.0/v1/product/query?pid=${encodeURIComponent(input.pid)}`, { headers: { "CJ-Access-Token": token }, signal: AbortSignal.timeout(20000) });
+  const detail = await detailResponse.json();
+  if (!detailResponse.ok || detail.code !== 200) throw new Error(detail.message || "CJ product lookup failed.");
+  const variant = (detail.data?.variants || []).find((item) => item.vid === input.vid);
+  if (!variant || variant.variantSellPrice == null || variant.variantSellPrice === "" || !Number.isFinite(Number(variant.variantSellPrice))) throw new Error("CJ did not return a price for this variant.");
+  const freightResponse = await fetch("https://developers.cjdropshipping.com/api2.0/v1/logistic/freightCalculate", {
+    method: "POST", signal: AbortSignal.timeout(20000),
+    headers: { "CJ-Access-Token": token, "content-type": "application/json" },
+    body: JSON.stringify({ startCountryCode: "CN", endCountryCode: "GB", ...(input.postcode ? { zip: String(input.postcode).trim() } : {}), products: [{ vid: variant.vid, quantity: 1 }] })
+  });
+  const freight = await freightResponse.json();
+  const shippingError = !freightResponse.ok || freight.code !== 200 ? freight.message || "CJ shipping quote failed." : null;
+  return { cost: Number(variant.variantSellPrice), currency: "USD", variantId: variant.vid, quotes: shippingError ? [] : normalizeQuotes(freight.data), shippingError, origin: "CN", destination: "GB", quantity: 1, quotedAt: new Date().toISOString() };
+}
+
+let repricingQueued = false;
+function enqueueRepricing(options) {
+  if (repricingQueued) return false;
+  repricingQueued = true;
+  const operation = draftQueue.then(() => withJobLock(() => runTracking({
+    readStore, saveStore,
+    quote: (row) => cjPriceQuote({ pid: row.cjProductId, vid: row.cjVariantId, postcode: row.quotePostcode }),
+    async connect(settings, preview) {
+      const token = await getUsableEbayToken();
+      assertTrackingConnection(settings, { environment: ebayEnvironment(), connectionId: token.connectionId, liveEnabled: process.env.EBAY_LIVE_PUBLISH === "true", productionConfirmed: process.env.EBAY_PRODUCTION_CONFIRM === "REAL_LISTINGS_ENABLED" }, preview);
+      return { request: (pathname, options) => ebayApi(pathname, token, options) };
+    }
+  }, options)));
+  draftQueue = operation.catch(() => { console.error("Price tracking could not complete; inspect storage and tracking status."); }).finally(() => { repricingQueued = false; });
+  return true;
+}
+
 async function handleApi(req, res, url) {
   try {
-    if (req.method === "POST" && url.pathname === "/api/cj/price-quote") {
+    if (req.method === "GET" && url.pathname === "/api/repricing") {
+      const store = await readStore();
+      const { connectionId, ...settings } = store.repricing || { enabled: false, autoApply: false, maxChangePercent: 20, rules: {} };
+      if (settings.run?.status === "running" && !repricingQueued) settings.run = { ...settings.run, status: "interrupted", message: "The server restarted during a check. Preview prices to reconcile with eBay before retrying." };
+      sendJson(res, 200, { settings, running: repricingQueued, environment: ebayEnvironment(), listings: (store.published || []).filter((item) => item.publishedMode === ebayEnvironment()).map((item) => ({ id: item.id, title: item.title, sku: item.sku, salePrice: item.salePrice, targetMarginPercent: item.targetMarginPercent, usdToGbp: item.usdToGbp, cjShippingService: item.cjShippingService, multiVariation: item.multiVariation, history: item.priceHistory || [] })) });
+      return;
+    }
+    if (req.method === "PUT" && url.pathname === "/api/repricing") {
       const input = await readBody(req);
-      if (!input.pid || !input.vid) {
-        sendJson(res, 400, { error: "Select a CJ variant first." });
-        return;
+      const store = await readStore();
+      const token = await getUsableEbayToken();
+      const settings = trackingSettings(input, store.published || [], { environment: ebayEnvironment(), connectionId: token.connectionId });
+      store.repricing = { ...store.repricing, ...settings };
+      await saveStore(store);
+      sendJson(res, 200, { saved: true });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/repricing/run") {
+      const input = await readBody(req);
+      const settings = (await readStore()).repricing;
+      if (!settings) { sendJson(res, 400, { error: "Save price tracking settings first." }); return; }
+      if (input.scheduled === true && !dailyDue(settings)) { sendJson(res, 200, { skipped: true }); return; }
+      const started = enqueueRepricing({ scheduled: input.scheduled === true, preview: input.scheduled === true ? !settings.autoApply : input.preview !== false });
+      sendJson(res, 202, { started, running: true });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/orders") {
+      res.setHeader("Cache-Control", "no-store");
+      try {
+        const token = await getUsableEbayToken();
+        const store = await readStore();
+        sendJson(res, 200, await fetchOrders(url.searchParams, (pathname) => ebayApi(pathname, token), store.published || [], ebayEnvironment()));
+      } catch (error) {
+        sendJson(res, 400, { error: `Orders could not be loaded. ${error.message} If eBay denies access, reconnect eBay in Settings to approve order access.` });
       }
-      const token = await getUsableCjToken();
-      const detailResponse = await fetch(`https://developers.cjdropshipping.com/api2.0/v1/product/query?pid=${encodeURIComponent(input.pid)}`, { headers: { "CJ-Access-Token": token } });
-      const detail = await detailResponse.json();
-      if (!detailResponse.ok || detail.code !== 200) throw new Error(detail.message || "CJ product lookup failed.");
-      const variant = (detail.data?.variants || []).find((item) => item.vid === input.vid);
-      if (!variant || variant.variantSellPrice == null || !Number.isFinite(Number(variant.variantSellPrice))) throw new Error("CJ did not return a price for this variant.");
-      const freightResponse = await fetch("https://developers.cjdropshipping.com/api2.0/v1/logistic/freightCalculate", {
-        method: "POST",
-        headers: { "CJ-Access-Token": token, "content-type": "application/json" },
-        body: JSON.stringify({ startCountryCode: "CN", endCountryCode: "GB", ...(input.postcode ? { zip: String(input.postcode).trim() } : {}), products: [{ vid: variant.vid, quantity: 1 }] })
-      });
-      const freight = await freightResponse.json();
-      const shippingError = !freightResponse.ok || freight.code !== 200 ? freight.message || "CJ shipping quote failed." : null;
-      sendJson(res, 200, { cost: Number(variant.variantSellPrice), currency: "USD", variantId: variant.vid, quotes: shippingError ? [] : normalizeQuotes(freight.data), shippingError, origin: "CN", destination: "GB", quantity: 1, quotedAt: new Date().toISOString() });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/cj/price-quote") {
+      sendJson(res, 200, await cjPriceQuote(await readBody(req)));
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/ebay/locations/cj-jinhua") {
@@ -1711,15 +1770,17 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (!accessGuard(req, res, url)) return;
   if (url.pathname === "/healthz") {
-    sendJson(res, 200, { status: "ok" });
+    sendJson(res, 200, { status: "ok", revision: process.env.RENDER_GIT_COMMIT || "local", features: ["orders", "price-tracking"] });
     return;
   }
   if (url.pathname === "/auth/ebay/callback") {
-    await handleEbayCallback(req, res, url);
+    const operation = draftQueue.then(() => handleEbayCallback(req, res, url));
+    draftQueue = operation.catch(() => {});
+    await operation;
   } else if (url.pathname === "/auth/ebay/declined") {
     sendHtml(res, 200, oauthPage("eBay connection declined", "No eBay token was created. You can return to the dashboard and try again."));
   } else if (url.pathname.startsWith("/api/")) {
-    if (url.pathname === "/api/drafts" || url.pathname.startsWith("/api/drafts/")) {
+    if (!(req.method === "GET" && ["/api/ebay/marketplace-account-deletion", "/api/repricing"].includes(url.pathname))) {
       const operation = draftQueue.then(() => handleApi(req, res, url));
       draftQueue = operation.catch(() => {});
       await operation;
@@ -1738,3 +1799,8 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, () => {
   console.log(`CJ to eBay listing control running at http://localhost:${port}`);
 });
+
+// External daily trigger wakes sleeping hosts; also support an always-on server.
+setInterval(() => {
+  if (!repricingQueued) enqueueRepricing({ scheduled: true, preview: false });
+}, 60000).unref();

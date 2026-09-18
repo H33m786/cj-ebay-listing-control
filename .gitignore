@@ -1,4 +1,5 @@
 .env
+data/
 data/ebay-oauth-state.json
 data/ebay-token.json
 data/cj-token.json

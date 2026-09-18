@@ -1,4 +1,8 @@
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./pricing.js";
+import { createOrdersView } from "./orders.js";
+const ordersView = createOrdersView(document.querySelector("#ordersView"));
+import { createRepricingView } from "./repricing.js";
+const repricingView = createRepricingView(document.querySelector("#repricingView"));
 
 const state = {
   products: [],
@@ -474,6 +478,8 @@ const demoImageGalleries = {
 };
 
 const viewCopy = {
+  orders: ["Fulfilment", "eBay orders"],
+  repricing: ["Pricing", "Price tracking"],
   import: ["Supplier search", "Import CJ products"],
   drafts: ["Listing review", "Prepare eBay drafts"],
   published: ["Live catalogue", "Published listings"],
@@ -699,6 +705,10 @@ function matchesCategory(product, category) {
 }
 
 function setView(name) {
+  if (name === "repricing") repricingView.load();
+  else repricingView.clear();
+  if (name === "orders") ordersView.load();
+  else ordersView.clear();
   document.querySelectorAll(".nav-tab").forEach((button) => button.classList.toggle("active", button.dataset.view === name));
   document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
   $(`#${name}View`).classList.add("active");
@@ -1359,7 +1369,7 @@ function syncCategoryChips() {
   });
 }
 
-$("#refreshButton").addEventListener("click", loadAll);
+$("#refreshButton").addEventListener("click", () => $("#ordersView").classList.contains("active") ? ordersView.load() : $("#repricingView").classList.contains("active") ? repricingView.load() : loadAll());
 
 loadAll().catch((error) => {
   $("#productGrid").innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;

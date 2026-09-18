@@ -20,11 +20,22 @@ test("local documents survive reopening storage", async () => {
 test("hosted app refuses missing storage or login configuration", () => {
   assert.throws(() => createAccessGuard({ RENDER: "true" }), /Hosting requires/);
 });
+test("local price-job lock blocks overlap and releases after failure", async () => {
+  const storage = await createStorage(tmpdir());
+  let release;
+  const blocker = new Promise((resolve) => { release = resolve; });
+  const first = storage.withJobLock(() => blocker);
+  assert.equal(await storage.withJobLock(() => { throw new Error("must not run"); }), false);
+  release();
+  assert.equal(await first, true);
+  await assert.rejects(storage.withJobLock(() => { throw new Error("test failure"); }));
+  assert.equal(await storage.withJobLock(async () => {}), true);
+});
 
 test("login protects pages, APIs and callbacks but permits public endpoints", () => {
   const guard = createAccessGuard({ APP_USERNAME: "owner", APP_PASSWORD: "test-password-long", APP_URL: "https://example.com" });
   const response = () => ({ status: 200, setHeader() {}, writeHead(status) { this.status = status; }, end() {} });
-  for (const pathname of ["/", "/api/drafts", "/auth/ebay/callback"]) {
+  for (const pathname of ["/", "/api/drafts", "/api/orders", "/api/repricing", "/api/repricing/run", "/auth/ebay/callback"]) {
     const res = response();
     assert.equal(guard({ headers: {}, method: "GET" }, res, new URL(pathname, "https://example.com")), false);
     assert.equal(res.status, 401);

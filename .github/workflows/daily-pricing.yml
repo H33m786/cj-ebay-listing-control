@@ -1,0 +1,48 @@
+name: Daily CJ price check
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: daily-cj-pricing
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Trigger and monitor the server price check
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          APP_USERNAME: ${{ secrets.APP_USERNAME }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          const { APP_URL, APP_USERNAME, APP_PASSWORD } = process.env;
+          if (!APP_URL || !APP_USERNAME || !APP_PASSWORD) throw new Error('Configure APP_URL, APP_USERNAME and APP_PASSWORD repository secrets.');
+          const base = new URL(APP_URL);
+          if (base.protocol !== 'https:') throw new Error('APP_URL must use HTTPS.');
+          const headers = { authorization: `Basic ${Buffer.from(`${APP_USERNAME}:${APP_PASSWORD}`).toString('base64')}`, 'content-type': 'application/json' };
+          async function call(path, options = {}) {
+            const response = await fetch(new URL(path, base), { headers, redirect: 'error', signal: AbortSignal.timeout(120000), ...options });
+            if (!response.ok) throw new Error(`Price-check endpoint returned HTTP ${response.status}`);
+            return response.json();
+          }
+          await call('/healthz');
+          const start = await call('/api/repricing/run', { method: 'POST', body: JSON.stringify({ scheduled: true }) });
+          if (start.skipped) {
+            const state = await call('/api/repricing');
+            if (!state.settings.enabled) { console.log('Daily checks are disabled.'); process.exit(0); }
+          }
+          for (let attempt = 0; attempt < 160; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 10000));
+            const state = await call('/api/repricing');
+            if (state.running) continue;
+            const status = state.settings.run?.status;
+            if (status !== 'complete') throw new Error('Price check needs review. Open Price tracking in the app.');
+            console.log('Daily price check completed.'); process.exit(0);
+          }
+          throw new Error('Price check timed out. Review its status in the app.');
+          JS
