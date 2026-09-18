@@ -1,4 +1,4 @@
-import { draftPricing } from "./pricing.js";
+import { draftPricing, targetSalePrice, applyTargetPrice } from "./pricing.js";
 
 const state = {
   products: [],
@@ -644,7 +644,7 @@ async function localApi(path, options, originalError) {
     if (index === -1) throw originalError;
 
     if (options.method === "PATCH" && !action) {
-      store.drafts[index] = { ...store.drafts[index], ...JSON.parse(options.body), updatedAt: new Date().toISOString() };
+      store.drafts[index] = applyTargetPrice({ ...store.drafts[index], ...JSON.parse(options.body), updatedAt: new Date().toISOString() });
       writeHostedStore(store);
       return { draft: store.drafts[index], validation: validateClient(store.drafts[index]) };
     }
@@ -809,7 +809,10 @@ function renderEditor(draft) {
       <label>China to UK shipping (one item) <select name="cjShippingService" id="cjShippingSelect"><option value="${escapeAttr(draft.cjShippingService || "")}">${escapeHtml(draft.cjShippingService || "Select variant first")}</option></select></label>
       <button type="button" id="refreshCjQuoteButton">Refresh CJ prices</button>
       <p class="wide inline-status" id="cjQuoteStatus"></p>` : ""}
-      <label>Sale price (GBP) <input name="salePrice" type="number" step="0.01" min="0" value="${draft.salePrice}" /></label>
+      <label class="wide pricing-confirmation"><input name="autoPrice" type="checkbox" ${draft.autoPrice !== false ? "checked" : ""} /> Calculate sale price from target margin</label>
+      <label>Target profit margin (%) <input name="targetMarginPercent" type="number" step="0.1" min="0.1" max="99.9" value="${draft.targetMarginPercent ?? 25}" /></label>
+      <label>Sale price (GBP) <input name="salePrice" type="number" step="0.01" min="0" value="${draft.salePrice ?? ""}" /></label>
+      <p class="wide inline-status" id="targetPriceStatus"></p>
       <label>Quantity <input name="quantity" type="number" min="0" value="${draft.quantity}" /></label>
       <label>Supplier cost currency <select name="costCurrency"><option value="USD" ${(draft.costCurrency || (String(draft.cjProductId).startsWith("CJ-") ? "GBP" : "USD")) === "USD" ? "selected" : ""}>USD</option><option value="GBP" ${(draft.costCurrency || (String(draft.cjProductId).startsWith("CJ-") ? "GBP" : "USD")) === "GBP" ? "selected" : ""}>GBP</option></select></label>
       <label>GBP per USD (including conversion charges) <input name="usdToGbp" type="number" step="0.0001" min="0" value="${draft.usdToGbp ?? ""}" /></label>
@@ -817,6 +820,7 @@ function renderEditor(draft) {
       <label>Shipping cost (supplier currency) <input name="shippingCost" type="number" step="0.01" min="0" required value="${draft.shippingCost ?? ""}" /></label>
       <label>Estimated selling fees (%) <input name="feePercent" type="number" step="0.01" min="0" max="99" value="${draft.feePercent ?? 12.8}" /></label>
       <label>Estimated fixed fee (GBP) <input name="feeFixed" type="number" step="0.01" min="0" value="${draft.feeFixed ?? 0.3}" /></label>
+      <label>Other costs per item (GBP) <input name="otherCostsGbp" type="number" step="0.01" min="0" value="${draft.otherCostsGbp ?? 0}" /></label>
       <label class="wide pricing-confirmation"><input name="pricingReviewed" type="checkbox" ${draft.pricingReviewed === true ? "checked" : ""} /> Selected variant, shipping quote and currency conversion confirmed</label>
       <label>Handling days <input name="handlingDays" type="number" min="1" value="${draft.handlingDays}" /></label>
       <label>Delivery estimate <input name="deliveryDays" type="number" min="1" value="${draft.deliveryDays}" /></label>
@@ -833,8 +837,19 @@ function renderEditor(draft) {
   `;
 
   const refreshPricing = () => {
-    editor.querySelector(".validation-box").outerHTML = validationMarkup(validateClient({ ...draft, ...draftFormValues(editor) }));
+    let current = { ...draft, ...draftFormValues(editor) };
+    editor.elements.salePrice.readOnly = current.autoPrice;
+    if (current.autoPrice) {
+      const target = targetSalePrice(current);
+      editor.elements.salePrice.value = target.price == null ? "" : target.price.toFixed(2);
+      editor.querySelector("#targetPriceStatus").textContent = target.error || "";
+      current = { ...current, salePrice: target.price };
+    } else {
+      editor.querySelector("#targetPriceStatus").textContent = "";
+    }
+    editor.querySelector(".validation-box").outerHTML = validationMarkup(validateClient(current));
   };
+  refreshPricing();
   editor.oninput = refreshPricing;
   editor.onchange = refreshPricing;
   const variantSelect = editor.querySelector("#cjVariantSelect");
@@ -936,10 +951,11 @@ function supplierGalleryMarkup(draft) {
 function draftFormValues(form) {
   const formData = new FormData(form);
   const body = Object.fromEntries(formData.entries());
-  ["salePrice", "quantity", "cost", "shippingCost", "handlingDays", "deliveryDays", "usdToGbp", "feePercent", "feeFixed"].forEach((key) => {
+  ["salePrice", "quantity", "cost", "shippingCost", "handlingDays", "deliveryDays", "usdToGbp", "feePercent", "feeFixed", "targetMarginPercent", "otherCostsGbp"].forEach((key) => {
     body[key] = body[key] === "" ? null : Number(body[key]);
   });
   body.pricingReviewed = formData.has("pricingReviewed");
+  body.autoPrice = formData.has("autoPrice");
   return body;
 }
 
@@ -996,6 +1012,10 @@ function validateClient(draft) {
   const pricing = draftPricing(draft);
   const { landedCost: landed, estimatedFees: fees, margin, marginPercent } = pricing;
   const failures = [...pricing.failures];
+  if (draft.autoPrice === true) {
+    const target = targetSalePrice(draft);
+    if (target.error) failures.push(target.error);
+  }
   const warnings = [];
   if (!draft.title || draft.title.length < 12) failures.push("Title needs more detail.");
   if (draft.title?.length > 80) failures.push("eBay titles should stay within 80 characters.");

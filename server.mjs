@@ -3,7 +3,7 @@ import { readFile as readLocalFile, mkdir, stat } from "node:fs/promises";
 import { createStorage } from "./storage.mjs";
 import { createAccessGuard } from "./access.mjs";
 import { accountRequestUrl, ebayErrorMessage } from "./ebay-request.mjs";
-import { draftPricing } from "./public/pricing.js";
+import { draftPricing, targetSalePrice, applyTargetPrice } from "./public/pricing.js";
 import { normalizeQuotes } from "./cj-quotes.mjs";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
@@ -620,6 +620,9 @@ function makeDraftFromProduct(product) {
     costCurrency: isSampleProduct(product) ? "GBP" : "USD",
     usdToGbp: null,
     pricingReviewed: false,
+    autoPrice: true,
+    targetMarginPercent: 25,
+    otherCostsGbp: 0,
     salePrice: isSampleProduct(product) ? price : 0,
     handlingDays: product.deliveryDays > 10 ? 5 : 3,
     deliveryDays: product.deliveryDays,
@@ -657,6 +660,11 @@ function validateDraft(draft) {
   const foundBlocked = blockedTerms.filter((term) => text.includes(term));
   const warnings = [];
   const failures = [...pricing.failures];
+  if (draft.autoPrice === true) {
+    const target = targetSalePrice(draft);
+    if (target.error) failures.push(target.error);
+    else if (Number(draft.salePrice) !== target.price) failures.push("Save the draft to update its calculated sale price.");
+  }
 
   if (!draft.title || draft.title.length < 12) failures.push("Title needs more detail.");
   if (draft.title && draft.title.length > 80) failures.push("eBay titles should stay within 80 characters.");
@@ -1603,7 +1611,7 @@ async function handleApi(req, res, url) {
 
       if (req.method === "PATCH" && !action) {
         const body = await readBody(req);
-        store.drafts[index] = { ...store.drafts[index], ...body, updatedAt: new Date().toISOString() };
+        store.drafts[index] = applyTargetPrice({ ...store.drafts[index], ...body, updatedAt: new Date().toISOString() });
         await saveStore(store);
         sendJson(res, 200, { draft: store.drafts[index], validation: validateDraft(store.drafts[index]) });
         return;

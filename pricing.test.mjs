@@ -1,8 +1,37 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { draftPricing } from "./public/pricing.js";
+import { draftPricing, targetSalePrice, applyTargetPrice } from "./public/pricing.js";
 
 const jacket = { source: "cj", cjProductId: "2412280910051604000", cost: 9.95, shippingCost: 11.25, costCurrency: "USD", usdToGbp: 0.75, salePrice: 25, feePercent: 12.8, feeFixed: 0.3, pricingReviewed: true };
+test("target price meets profit margin after percentage and fixed fees", () => {
+  const draft = { ...jacket, targetMarginPercent: 25, autoPrice: true };
+  const result = applyTargetPrice(draft);
+  assert.equal(result.salePrice, 26.05);
+  const pricing = draftPricing(result);
+  assert.ok(pricing.margin / result.salePrice >= 0.25);
+});
+test("target price recalculates costs and preserves manual mode", () => {
+  const draft = { ...jacket, targetMarginPercent: 25, autoPrice: true };
+  assert.ok(applyTargetPrice({ ...draft, shippingCost: 20 }).salePrice > applyTargetPrice(draft).salePrice);
+  assert.ok(applyTargetPrice({ ...draft, otherCostsGbp: 2 }).salePrice > applyTargetPrice(draft).salePrice);
+  assert.equal(applyTargetPrice({ ...draft, autoPrice: false }).salePrice, 25);
+});
+test("incomplete or impossible targets never produce a publishable price", () => {
+  for (const targetMarginPercent of [null, "", -5, 0, 100, 90]) {
+    assert.equal(targetSalePrice({ ...jacket, targetMarginPercent }).price, null);
+  }
+  assert.equal(targetSalePrice({ ...jacket, usdToGbp: null, targetMarginPercent: 25 }).price, null);
+});
+test("rounded prices achieve requested margins across small and large costs", () => {
+  for (const cost of [0.01, 0.17, 9.95, 100, 1000]) {
+    for (const targetMarginPercent of [5, 15, 25, 50, 80]) {
+      const draft = { ...jacket, cost, targetMarginPercent };
+      const { price } = targetSalePrice(draft);
+      assert.ok(price > 0);
+      assert.ok(draftPricing({ ...draft, salePrice: price }).margin / price * 100 + 1e-9 >= targetMarginPercent);
+    }
+  }
+});
 test("converts both item and freight to GBP before calculating margin", () => {
   const result = draftPricing(jacket);
   assert.equal(result.landedCost, 15.9);
