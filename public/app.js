@@ -805,7 +805,7 @@ function renderEditor(draft) {
       <label>Category <input name="category" value="${escapeAttr(draft.category)}" /></label>
       <label>Sale price (GBP) <input name="salePrice" type="number" step="0.01" min="0" value="${draft.salePrice}" /></label>
       <label>Quantity <input name="quantity" type="number" min="0" value="${draft.quantity}" /></label>
-      <label>Supplier cost currency <select name="costCurrency"><option value="USD" ${(draft.costCurrency || "USD") === "USD" ? "selected" : ""}>USD</option><option value="GBP" ${draft.costCurrency === "GBP" ? "selected" : ""}>GBP</option></select></label>
+      <label>Supplier cost currency <select name="costCurrency"><option value="USD" ${(draft.costCurrency || (String(draft.cjProductId).startsWith("CJ-") ? "GBP" : "USD")) === "USD" ? "selected" : ""}>USD</option><option value="GBP" ${(draft.costCurrency || (String(draft.cjProductId).startsWith("CJ-") ? "GBP" : "USD")) === "GBP" ? "selected" : ""}>GBP</option></select></label>
       <label>GBP per USD (including conversion charges) <input name="usdToGbp" type="number" step="0.0001" min="0" value="${draft.usdToGbp ?? ""}" /></label>
       <label>Item cost (supplier currency) <input name="cost" type="number" step="0.01" min="0" required value="${draft.cost}" /></label>
       <label>Shipping cost (supplier currency) <input name="shippingCost" type="number" step="0.01" min="0" required value="${draft.shippingCost ?? ""}" /></label>
@@ -826,17 +826,31 @@ function renderEditor(draft) {
     </div>
   `;
 
+  const refreshPricing = () => {
+    editor.querySelector(".validation-box").outerHTML = validationMarkup(validateClient({ ...draft, ...draftFormValues(editor) }));
+  };
+  editor.oninput = refreshPricing;
+  editor.onchange = refreshPricing;
   editor.onsubmit = async (event) => {
     event.preventDefault();
-    await saveDraftFromForm(draft.id);
+    try {
+      await saveDraftFromForm(draft.id);
+    } catch (error) {
+      alert(error.message);
+    }
   };
   $("#validateButton").addEventListener("click", async () => {
-    const result = await api(`/api/drafts/${draft.id}/validate`, { method: "POST" });
-    editor.querySelector(".validation-box").outerHTML = validationMarkup(result.validation);
+    try {
+      await saveDraftFromForm(draft.id);
+      const result = await api(`/api/drafts/${draft.id}/validate`, { method: "POST" });
+      editor.querySelector(".validation-box").outerHTML = validationMarkup(result.validation);
+    } catch (error) {
+      alert(error.message);
+    }
   });
   $("#publishButton").addEventListener("click", async () => {
-    await saveDraftFromForm(draft.id);
     try {
+      await saveDraftFromForm(draft.id);
       const result = await api(`/api/drafts/${draft.id}/publish`, { method: "POST" });
       state.published.unshift(result.published);
       state.drafts = state.drafts.filter((item) => item.id !== draft.id);
@@ -868,13 +882,18 @@ function supplierGalleryMarkup(draft) {
   `;
 }
 
-async function saveDraftFromForm(id) {
-  const formData = new FormData($("#draftEditor"));
+function draftFormValues(form) {
+  const formData = new FormData(form);
   const body = Object.fromEntries(formData.entries());
   ["salePrice", "quantity", "cost", "shippingCost", "handlingDays", "deliveryDays", "usdToGbp", "feePercent", "feeFixed"].forEach((key) => {
     body[key] = body[key] === "" ? null : Number(body[key]);
   });
   body.pricingReviewed = formData.has("pricingReviewed");
+  return body;
+}
+
+async function saveDraftFromForm(id) {
+  const body = draftFormValues($("#draftEditor"));
   const result = await api(`/api/drafts/${id}`, {
     method: "PATCH",
     body: JSON.stringify(body)
