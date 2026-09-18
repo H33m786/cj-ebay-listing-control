@@ -1768,6 +1768,7 @@ let draftQueue = Promise.resolve();
 const server = http.createServer(async (req, res) => {
   try {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  if (await accessGuard.handleSession(req, res, url)) return;
   if (!accessGuard(req, res, url)) return;
   if (url.pathname === "/healthz") {
     sendJson(res, 200, { status: "ok", revision: process.env.RENDER_GIT_COMMIT || "local", features: ["orders", "price-tracking"] });
