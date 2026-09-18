@@ -3,6 +3,7 @@ import { readFile as readLocalFile, mkdir, stat } from "node:fs/promises";
 import { createStorage } from "./storage.mjs";
 import { createAccessGuard } from "./access.mjs";
 import { accountRequestUrl, ebayErrorMessage } from "./ebay-request.mjs";
+import { draftPricing } from "./public/pricing.js";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -614,8 +615,11 @@ function makeDraftFromProduct(product) {
     quantity: Math.min(product.stock, 10),
     stock: product.stock,
     cost: product.cost,
-    shippingCost: product.shipping,
-    salePrice: price,
+    shippingCost: isSampleProduct(product) ? product.shipping : null,
+    costCurrency: isSampleProduct(product) ? "GBP" : "USD",
+    usdToGbp: null,
+    pricingReviewed: false,
+    salePrice: isSampleProduct(product) ? price : 0,
     handlingDays: product.deliveryDays > 10 ? 5 : 3,
     deliveryDays: product.deliveryDays,
     image,
@@ -645,15 +649,13 @@ function primaryProductGroup(product) {
 }
 
 function validateDraft(draft) {
-  const landed = draft.cost + draft.shippingCost;
-  const fees = estimateFees(draft.salePrice);
-  const margin = Number((draft.salePrice - landed - fees).toFixed(2));
-  const marginPercent = draft.salePrice ? Number(((margin / draft.salePrice) * 100).toFixed(1)) : 0;
+  const pricing = draftPricing(draft);
+  const { landedCost: landed, estimatedFees: fees, margin, marginPercent } = pricing;
   const text = `${draft.title} ${draft.description}`.toLowerCase();
   const blockedTerms = ["nike", "adidas", "apple", "dyson", "stanley", "lego", "disney", "dupe", "replica"];
   const foundBlocked = blockedTerms.filter((term) => text.includes(term));
   const warnings = [];
-  const failures = [];
+  const failures = [...pricing.failures];
 
   if (!draft.title || draft.title.length < 12) failures.push("Title needs more detail.");
   if (draft.title && draft.title.length > 80) failures.push("eBay titles should stay within 80 characters.");
@@ -663,7 +665,6 @@ function validateDraft(draft) {
   if (draft.quantity > draft.stock) failures.push("Quantity is higher than CJ stock.");
   if (!draft.image) failures.push("At least one image is required.");
   if (!ebayImageUrlsForDraft(ensureDraftSupplierImage(draft))) failures.push("A real supplier image URL is required for eBay publishing.");
-  if (margin <= 0) failures.push("Listing is not profitable after estimated fees.");
   if (marginPercent < 15) warnings.push("Margin is below the 15% target.");
   if (draft.deliveryDays > 10) warnings.push("Delivery estimate is slow for eBay buyers.");
   if (foundBlocked.length) failures.push(`Blocked brand/risk terms found: ${foundBlocked.join(", ")}.`);
@@ -673,7 +674,7 @@ function validateDraft(draft) {
     passed: failures.length === 0,
     failures,
     warnings,
-    landedCost: Number(landed.toFixed(2)),
+    landedCost: landed,
     estimatedFees: fees,
     margin,
     marginPercent
@@ -744,7 +745,7 @@ function ebayOfferPayload(draft) {
     listingDescription: ebayListingDescription(draft),
     pricingSummary: {
       price: {
-        currency: process.env.EBAY_CURRENCY || "GBP",
+        currency: "GBP",
         value: Number(draft.salePrice).toFixed(2)
       }
     },

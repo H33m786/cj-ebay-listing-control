@@ -1,3 +1,5 @@
+import { draftPricing } from "./pricing.js";
+
 const state = {
   products: [],
   drafts: [],
@@ -500,8 +502,9 @@ async function api(path, options = {}) {
   }
 }
 
-function money(value) {
-  return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(Number(value || 0));
+function money(value, currency = "GBP") {
+  if (value == null) return "Not calculated";
+  return new Intl.NumberFormat("en-GB", { style: "currency", currency, currencyDisplay: "code" }).format(Number(value || 0));
 }
 
 function readHostedStore() {
@@ -724,8 +727,8 @@ function renderProducts() {
     card.querySelector(".meta").textContent = `${product.category || product.categoryName || "Unmapped"} / ${product.warehouse || "CJ"}`;
     card.querySelector("h3").textContent = product.title || product.productNameEn || "Untitled CJ product";
     card.querySelector("dl").innerHTML = `
-      <div><dt>Cost</dt><dd>${money(product.cost)}</dd></div>
-      <div><dt>Ship</dt><dd>${money(product.shipping)}</dd></div>
+      <div><dt>Cost</dt><dd>${money(product.cost, String(product.pid).startsWith("CJ-") ? "GBP" : "USD")}</dd></div>
+      <div><dt>Ship</dt><dd>${String(product.pid).startsWith("CJ-") ? money(product.shipping) : "Quote required"}</dd></div>
       <div><dt>Stock</dt><dd>${product.stock ?? "Check"}</dd></div>
       <div><dt>Delivery</dt><dd>${product.deliveryDays ?? "Check"} days</dd></div>
     `;
@@ -781,7 +784,7 @@ function validationMarkup(validation) {
         <div class="metric"><span>Landed</span><strong>${money(validation.landedCost)}</strong></div>
         <div class="metric"><span>Fees</span><strong>${money(validation.estimatedFees)}</strong></div>
         <div class="metric"><span>Margin</span><strong>${money(validation.margin)}</strong></div>
-        <div class="metric"><span>Margin %</span><strong>${validation.marginPercent}%</strong></div>
+        <div class="metric"><span>Margin %</span><strong>${validation.marginPercent == null ? "Not calculated" : `${validation.marginPercent}%`}</strong></div>
       </div>
     </section>
   `;
@@ -800,10 +803,15 @@ function renderEditor(draft) {
       <label class="wide">Title <input name="title" maxlength="80" value="${escapeAttr(draft.title)}" /></label>
       <label>SKU <input name="sku" value="${escapeAttr(draft.sku)}" /></label>
       <label>Category <input name="category" value="${escapeAttr(draft.category)}" /></label>
-      <label>Sale price <input name="salePrice" type="number" step="0.01" min="0" value="${draft.salePrice}" /></label>
+      <label>Sale price (GBP) <input name="salePrice" type="number" step="0.01" min="0" value="${draft.salePrice}" /></label>
       <label>Quantity <input name="quantity" type="number" min="0" value="${draft.quantity}" /></label>
-      <label>Cost <input name="cost" type="number" step="0.01" min="0" value="${draft.cost}" /></label>
-      <label>Shipping cost <input name="shippingCost" type="number" step="0.01" min="0" value="${draft.shippingCost}" /></label>
+      <label>Supplier cost currency <select name="costCurrency"><option value="USD" ${(draft.costCurrency || "USD") === "USD" ? "selected" : ""}>USD</option><option value="GBP" ${draft.costCurrency === "GBP" ? "selected" : ""}>GBP</option></select></label>
+      <label>GBP per USD (including conversion charges) <input name="usdToGbp" type="number" step="0.0001" min="0" value="${draft.usdToGbp ?? ""}" /></label>
+      <label>Item cost (supplier currency) <input name="cost" type="number" step="0.01" min="0" required value="${draft.cost}" /></label>
+      <label>Shipping cost (supplier currency) <input name="shippingCost" type="number" step="0.01" min="0" required value="${draft.shippingCost ?? ""}" /></label>
+      <label>Estimated selling fees (%) <input name="feePercent" type="number" step="0.01" min="0" max="99" value="${draft.feePercent ?? 12.8}" /></label>
+      <label>Estimated fixed fee (GBP) <input name="feeFixed" type="number" step="0.01" min="0" value="${draft.feeFixed ?? 0.3}" /></label>
+      <label class="wide pricing-confirmation"><input name="pricingReviewed" type="checkbox" ${draft.pricingReviewed === true ? "checked" : ""} /> Selected variant, shipping quote and currency conversion confirmed</label>
       <label>Handling days <input name="handlingDays" type="number" min="1" value="${draft.handlingDays}" /></label>
       <label>Delivery estimate <input name="deliveryDays" type="number" min="1" value="${draft.deliveryDays}" /></label>
       <label class="wide">Description <textarea name="description">${escapeHtml(draft.description)}</textarea></label>
@@ -863,9 +871,10 @@ function supplierGalleryMarkup(draft) {
 async function saveDraftFromForm(id) {
   const formData = new FormData($("#draftEditor"));
   const body = Object.fromEntries(formData.entries());
-  ["salePrice", "quantity", "cost", "shippingCost", "handlingDays", "deliveryDays"].forEach((key) => {
-    body[key] = Number(body[key]);
+  ["salePrice", "quantity", "cost", "shippingCost", "handlingDays", "deliveryDays", "usdToGbp", "feePercent", "feeFixed"].forEach((key) => {
+    body[key] = body[key] === "" ? null : Number(body[key]);
   });
+  body.pricingReviewed = formData.has("pricingReviewed");
   const result = await api(`/api/drafts/${id}`, {
     method: "PATCH",
     body: JSON.stringify(body)
@@ -914,10 +923,9 @@ function collectImageUrls(urls, value) {
 }
 
 function validateClient(draft) {
-  const landed = Number((draft.cost + draft.shippingCost).toFixed(2));
-  const fees = estimateFees(draft.salePrice);
-  const margin = Number((draft.salePrice - landed - fees).toFixed(2));
-  const failures = [];
+  const pricing = draftPricing(draft);
+  const { landedCost: landed, estimatedFees: fees, margin, marginPercent } = pricing;
+  const failures = [...pricing.failures];
   const warnings = [];
   if (!draft.title || draft.title.length < 12) failures.push("Title needs more detail.");
   if (draft.title?.length > 80) failures.push("eBay titles should stay within 80 characters.");
@@ -927,8 +935,6 @@ function validateClient(draft) {
   if (draft.quantity > draft.stock) failures.push("Quantity is higher than CJ stock.");
   if (!draft.image) failures.push("At least one image is required.");
   if (!imageUrlList(draft.supplierImages, draft.supplierImage, draft.image).length) failures.push("A real supplier image URL is required for eBay publishing.");
-  if (margin <= 0) failures.push("Listing is not profitable after estimated fees.");
-  const marginPercent = draft.salePrice ? Number(((margin / draft.salePrice) * 100).toFixed(1)) : 0;
   if (marginPercent < 15) warnings.push("Margin is below the 15% target.");
   if (draft.deliveryDays > 10) warnings.push("Delivery estimate is slow for eBay buyers.");
   return { passed: failures.length === 0, failures, warnings, landedCost: landed, estimatedFees: fees, margin, marginPercent };
