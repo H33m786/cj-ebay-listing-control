@@ -1620,6 +1620,25 @@ async function handleApi(req, res, url) {
       return;
     }
 
+    if (req.method === "GET" && (url.pathname === "/api/ebay/categories" || url.pathname === "/api/ebay/category-suggestions")) {
+      try {
+        const token = await getUsableEbayToken();
+        const marketplace = process.env.EBAY_MARKETPLACE_ID || "EBAY_GB";
+        const tree = await ebayApi(`/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id=${marketplace}`, token);
+        const query = url.searchParams.get("q") || "";
+        const suggestions = await ebayApi(`/commerce/taxonomy/v1/category_tree/${tree.categoryTreeId}/get_category_suggestions?q=${encodeURIComponent(query)}`, token);
+        sendJson(res, 200, {
+          categories: (suggestions.categorySuggestions || []).map((item) => ({
+            id: item.category.categoryId,
+            name: [...(item.categoryTreeNodeAncestors || []).map((node) => node.categoryName), item.category.categoryName].join(" / ")
+          }))
+        });
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/cj/connect") {
       try {
         const body = await readBody(req);

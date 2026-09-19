@@ -942,7 +942,7 @@ function renderEditor(draft) {
     }
     categoryResults.innerHTML = '<p class="inline-status">Searching eBay categories...</p>';
     try {
-      const result = await api(`/api/ebay/category-suggestions?q=${encodeURIComponent(query)}`);
+      const result = await api(`/api/ebay/categories?q=${encodeURIComponent(query)}`);
       const categories = result.categories || [];
       if (!categories.length) {
         categoryResults.innerHTML = '<p class="inline-status">No eBay categories found. Try a shorter search like "mens jacket".</p>';
