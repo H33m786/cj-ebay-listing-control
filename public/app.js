@@ -808,11 +808,20 @@ function renderEditor(draft) {
   }
 
   const validation = validateClient(draft);
+  const categoryLabel = draft.ebayCategoryName || (draft.ebayCategoryId ? `eBay category ${draft.ebayCategoryId}` : "No eBay category selected");
   editor.innerHTML = `
     <div class="editor-grid">
       <label class="wide">Title <input name="title" maxlength="80" value="${escapeAttr(draft.title)}" /></label>
       <label>SKU <input name="sku" value="${escapeAttr(draft.sku)}" /></label>
       <label>Category <input name="category" value="${escapeAttr(draft.category)}" /></label>
+      <label class="wide">eBay category search <input name="ebayCategorySearch" value="${escapeAttr(draft.ebayCategorySearch || draft.title || "")}" placeholder="Search eBay categories" /></label>
+      <div class="wide category-picker">
+        <input type="hidden" name="ebayCategoryId" value="${escapeAttr(draft.ebayCategoryId || "")}" />
+        <input type="hidden" name="ebayCategoryName" value="${escapeAttr(draft.ebayCategoryName || "")}" />
+        <button type="button" class="secondary" id="findEbayCategoryButton">Find eBay categories</button>
+        <span id="selectedEbayCategory">${escapeHtml(categoryLabel)}</span>
+        <div id="ebayCategoryResults" class="category-results"></div>
+      </div>
       ${Array.isArray(draft.variants) && draft.variants.some((item) => item?.vid) ? `
       <label class="wide">CJ size / colour <select name="cjVariantId" id="cjVariantSelect"><option value="">Select variant</option>${draft.variants.filter((item) => item?.vid).map((item) => `<option value="${escapeAttr(item.vid)}" ${draft.cjVariantId === item.vid ? "selected" : ""}>${escapeHtml(item.variantKey || item.variantNameEn || item.variantSku)}</option>`).join("")}</select></label>
       <label>UK destination postcode (optional) <input name="quotePostcode" value="${escapeAttr(draft.quotePostcode || "")}" /></label>
@@ -842,9 +851,17 @@ function renderEditor(draft) {
     <div class="editor-actions">
       <button type="submit">Save draft</button>
       <button type="button" class="secondary" id="validateButton">Run checks</button>
-      <button type="button" id="publishButton">Publish to eBay</button>
+      <button type="button" id="publishButton" ${validation.passed ? "" : "disabled"} title="${validation.passed ? "Publish to eBay" : "Run checks and fix the listed issues first"}">Publish to eBay</button>
     </div>
   `;
+
+  const updateValidation = (current) => {
+    const nextValidation = validateClient(current);
+    editor.querySelector(".validation-box").outerHTML = validationMarkup(nextValidation);
+    const publishButton = editor.querySelector("#publishButton");
+    publishButton.disabled = !nextValidation.passed;
+    publishButton.title = nextValidation.passed ? "Publish to eBay" : "Run checks and fix the listed issues first";
+  };
 
   const refreshPricing = () => {
     let current = { ...draft, ...draftFormValues(editor) };
@@ -857,7 +874,7 @@ function renderEditor(draft) {
     } else {
       editor.querySelector("#targetPriceStatus").textContent = "";
     }
-    editor.querySelector(".validation-box").outerHTML = validationMarkup(validateClient(current));
+    updateValidation(current);
   };
   refreshPricing();
   editor.oninput = refreshPricing;
@@ -907,6 +924,42 @@ function renderEditor(draft) {
     editor.elements.quotePostcode.addEventListener("change", refreshQuote);
     editor.querySelector("#refreshCjQuoteButton").addEventListener("click", refreshQuote);
   }
+  const categoryResults = editor.querySelector("#ebayCategoryResults");
+  const selectedCategory = editor.querySelector("#selectedEbayCategory");
+  const findCategoryButton = editor.querySelector("#findEbayCategoryButton");
+  const selectEbayCategory = (category) => {
+    editor.elements.ebayCategoryId.value = category.id;
+    editor.elements.ebayCategoryName.value = category.name;
+    selectedCategory.textContent = category.name;
+    categoryResults.innerHTML = "";
+    refreshPricing();
+  };
+  findCategoryButton.addEventListener("click", async () => {
+    const query = editor.elements.ebayCategorySearch.value.trim() || editor.elements.title.value.trim();
+    if (!query) {
+      categoryResults.innerHTML = '<p class="inline-status">Enter a product title or category search first.</p>';
+      return;
+    }
+    categoryResults.innerHTML = '<p class="inline-status">Searching eBay categories...</p>';
+    try {
+      const result = await api(`/api/ebay/category-suggestions?q=${encodeURIComponent(query)}`);
+      const categories = result.categories || [];
+      if (!categories.length) {
+        categoryResults.innerHTML = '<p class="inline-status">No eBay categories found. Try a shorter search like "mens jacket".</p>';
+        return;
+      }
+      categoryResults.innerHTML = categories.slice(0, 6).map((category) => `
+        <button type="button" class="category-result" data-id="${escapeAttr(category.id)}" data-name="${escapeAttr(category.name)}">
+          ${escapeHtml(category.name)}
+        </button>
+      `).join("");
+      categoryResults.querySelectorAll(".category-result").forEach((button) => {
+        button.addEventListener("click", () => selectEbayCategory({ id: button.dataset.id, name: button.dataset.name }));
+      });
+    } catch (error) {
+      categoryResults.innerHTML = `<p class="inline-status">${escapeHtml(error.message)}</p>`;
+    }
+  });
   editor.onsubmit = async (event) => {
     event.preventDefault();
     try {
@@ -920,6 +973,9 @@ function renderEditor(draft) {
       await saveDraftFromForm(draft.id);
       const result = await api(`/api/drafts/${draft.id}/validate`, { method: "POST" });
       editor.querySelector(".validation-box").outerHTML = validationMarkup(result.validation);
+      const publishButton = editor.querySelector("#publishButton");
+      publishButton.disabled = !result.validation.passed;
+      publishButton.title = result.validation.passed ? "Publish to eBay" : "Run checks and fix the listed issues first";
     } catch (error) {
       alert(error.message);
     }
@@ -963,6 +1019,9 @@ function draftFormValues(form) {
   const body = Object.fromEntries(formData.entries());
   ["salePrice", "quantity", "cost", "shippingCost", "handlingDays", "deliveryDays", "usdToGbp", "feePercent", "feeFixed", "targetMarginPercent", "otherCostsGbp"].forEach((key) => {
     body[key] = body[key] === "" ? null : Number(body[key]);
+  });
+  ["ebayCategorySearch", "ebayCategoryId", "ebayCategoryName"].forEach((key) => {
+    if (body[key] != null) body[key] = String(body[key]).trim();
   });
   body.pricingReviewed = formData.has("pricingReviewed");
   body.autoPrice = formData.has("autoPrice");
@@ -1031,6 +1090,8 @@ function validateClient(draft) {
   if (draft.title?.length > 80) failures.push("eBay titles should stay within 80 characters.");
   if (!draft.description || draft.description.length < 40) failures.push("Description is too thin.");
   if (!draft.category) failures.push("Category is required.");
+  if (!/^\d+$/.test(draft.ebayCategoryId || "")) failures.push("Choose an eBay category.");
+  if (draft.source === "cj" && !String(draft.cjProductId || "").startsWith("CJ-") && !draft.cjVariantId) failures.push("Select a CJ variant.");
   if (draft.quantity < 1) failures.push("Quantity must be at least 1.");
   if (draft.quantity > draft.stock) failures.push("Quantity is higher than CJ stock.");
   if (!draft.image) failures.push("At least one image is required.");
