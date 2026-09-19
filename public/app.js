@@ -862,6 +862,7 @@ function variationsMarkup(draft) {
               <input data-field="quantity" type="number" min="0" value="${escapeAttr(row.quantity ?? 1)}" aria-label="Quantity" />
               <input data-field="cost" type="number" step="0.01" min="0" value="${row.cost ?? ""}" aria-label="Cost" />
               <input data-field="shippingCost" type="number" step="0.01" min="0" value="${row.shippingCost ?? ""}" aria-label="Shipping cost" />
+              <span data-field="shippingServiceDisplay">${escapeHtml(row.cjShippingService || "Quote needed")}</span>
               <span data-field="salePriceDisplay">${money(row.salePrice ?? variantRowPricing(draft, row).prepared?.salePrice)}</span>
               <span data-field="marginDisplay">${pricing?.marginPercent == null ? "Margin ?" : `${pricing.marginPercent}%`}</span>
             </div>
@@ -937,6 +938,7 @@ function renderEditor(draft) {
     publishButton.title = nextValidation.passed ? "Publish to eBay" : "Run checks and fix the listed issues first";
   };
 
+  let refreshVariationDisplays = () => {};
   const refreshPricing = () => {
     let current = { ...draft, ...draftFormValues(editor) };
     editor.elements.salePrice.readOnly = current.autoPrice;
@@ -948,6 +950,7 @@ function renderEditor(draft) {
     } else {
       editor.querySelector("#targetPriceStatus").textContent = "";
     }
+    refreshVariationDisplays(current);
     updateValidation(current);
   };
   refreshPricing();
@@ -1003,11 +1006,17 @@ function renderEditor(draft) {
     const hiddenRows = editor.elements.listingVariantsJson;
     const status = editor.querySelector("#variationStatus");
     const rowElements = () => [...variationBuilder.querySelectorAll(".variation-row")];
+    const setInputValue = (node, field, value) => {
+      const input = node.querySelector(`[data-field="${field}"]`);
+      if (!input || document.activeElement === input) return;
+      input.value = value ?? "";
+    };
     const readRows = () => {
       const previous = new Map((JSON.parse(hiddenRows.value || "[]")).map((row) => [row.cjVariantId, row]));
+      const defaults = defaultListingVariants(draft);
       return rowElements().map((node) => {
-        const old = previous.get(defaultListingVariants(draft)[Number(node.dataset.index)]?.cjVariantId) || {};
-        const base = defaultListingVariants(draft)[Number(node.dataset.index)];
+        const base = defaults[Number(node.dataset.index)];
+        const old = previous.get(base?.cjVariantId) || {};
         return {
           ...old,
           cjVariantId: base.cjVariantId,
@@ -1025,29 +1034,46 @@ function renderEditor(draft) {
         };
       });
     };
-    const writeRows = (rows) => {
-      hiddenRows.value = JSON.stringify(rows);
-      const current = { ...draft, ...draftFormValues(editor) };
+    const paintRows = (rows, current) => {
       const selected = rows.filter((row) => row.enabled).length;
       status.textContent = selected ? `${selected} selected` : "No variants selected";
       rowElements().forEach((node, index) => {
         const row = rows[index];
+        if (!row) return;
+        const enabled = node.querySelector('[data-field="enabled"]');
+        if (enabled) enabled.checked = row.enabled === true;
+        setInputValue(node, "colour", row.aspects?.Colour || "");
+        setInputValue(node, "size", row.aspects?.Size || "");
+        setInputValue(node, "quantity", row.quantity ?? 1);
+        setInputValue(node, "cost", row.cost ?? "");
+        setInputValue(node, "shippingCost", row.shippingCost ?? "");
         const { prepared, pricing } = variantRowPricing(current, row);
         row.salePrice = prepared?.salePrice ?? row.salePrice ?? null;
+        node.querySelector('[data-field="shippingServiceDisplay"]').textContent = row.cjShippingService || row.quoteError || "Quote needed";
         node.querySelector('[data-field="salePriceDisplay"]').textContent = money(row.salePrice);
         node.querySelector('[data-field="marginDisplay"]').textContent = pricing?.marginPercent == null ? "Margin ?" : `${pricing.marginPercent}%`;
       });
       hiddenRows.value = JSON.stringify(rows);
-      refreshPricing();
+    };
+    refreshVariationDisplays = (current) => {
+      const rows = JSON.parse(hiddenRows.value || "[]");
+      paintRows(rows, current);
+    };
+    const writeRows = (rows, { refresh = true } = {}) => {
+      hiddenRows.value = JSON.stringify(rows);
+      const current = { ...draft, ...draftFormValues(editor) };
+      paintRows(rows, current);
+      if (refresh) refreshPricing();
     };
     variationBuilder.addEventListener("input", () => writeRows(readRows()));
     variationBuilder.addEventListener("change", () => writeRows(readRows()));
     editor.querySelector("#selectCommonVariantsButton").addEventListener("click", () => {
+      editor.elements.multiVariation.checked = true;
       const rows = readRows().map((row) => ({ ...row, enabled: /^(Black|Gray|Grey|Khaki|Army Green|Dark Blue)/i.test(row.aspects.Colour || "") && /^(M|L|XL|2XL|3XL)$/i.test(row.aspects.Size || "") }));
-      rowElements().forEach((node, index) => { node.querySelector('[data-field="enabled"]').checked = rows[index].enabled; });
       writeRows(rows);
     });
     editor.querySelector("#quoteVariantsButton").addEventListener("click", async () => {
+      editor.elements.multiVariation.checked = true;
       let rows = readRows();
       const selected = rows.filter((row) => row.enabled);
       if (!selected.length) { status.textContent = "Select at least two variants first."; return; }
@@ -1067,14 +1093,16 @@ function renderEditor(draft) {
           row.shippingCost = quote ? quote.price : null;
           row.cjShippingService = quote?.name || "";
           row.enabled = Boolean(quote);
+          row.quoteError = "";
         } catch (error) {
           row.enabled = false;
           row.quoteError = error.message;
         }
         completed += 1;
         status.textContent = `Quoting ${completed}/${selected.length} variants...`;
-        writeRows(rows);
+        writeRows(rows, { refresh: false });
       }
+      writeRows(rows);
       status.textContent = "Variant quotes refreshed. Review prices and tick the shared shipping confirmation.";
     });
     writeRows(readRows());

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { inventoryGroup, listingRows, variationErrors } from "./public/listing.js";
+import { draftPricing } from "./public/pricing.js";
 
 const draft = {
   id: "draft-1",
@@ -43,4 +44,12 @@ test("variation validation rejects duplicate attribute combinations", () => {
     ]
   });
   assert.ok(errors.includes("Two variations have the same attribute combination."));
+});
+
+test("variant rows calculate sale prices independently from the target margin", () => {
+  const rows = listingRows({ ...draft, multiVariation: true });
+  assert.equal(rows[0].salePrice, 39.2);
+  assert.equal(rows[1].salePrice, 41.97);
+  assert.ok(draftPricing(rows[0]).marginPercent >= draft.targetMarginPercent);
+  assert.ok(draftPricing(rows[1]).marginPercent >= draft.targetMarginPercent);
 });

@@ -499,7 +499,7 @@ dd {
 
 .variation-row {
   display: grid;
-  grid-template-columns: 64px minmax(130px, 1.2fr) minmax(90px, 1fr) 70px 70px 90px 90px 92px 70px;
+  grid-template-columns: 64px minmax(120px, 1.2fr) minmax(86px, 1fr) 64px 64px 82px 82px minmax(110px, 1fr) 86px 70px;
   gap: 8px;
   align-items: center;
   border: 1px solid var(--line);
