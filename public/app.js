@@ -1,4 +1,5 @@
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./pricing.js";
+import { listingRows, variationErrors } from "./listing.js";
 import { createOrdersView } from "./orders.js";
 const ordersView = createOrdersView(document.querySelector("#ordersView"));
 import { createRepricingView } from "./repricing.js";
@@ -800,6 +801,78 @@ function validationMarkup(validation) {
   `;
 }
 
+function splitVariantLabel(variant = {}) {
+  const label = variant.variantKey || variant.variantNameEn || variant.variantSku || variant.vid || "";
+  const parts = String(label).split("-").map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 2) return { colour: parts.slice(0, -1).join("-"), size: parts.at(-1), label };
+  return { colour: label || "Option", size: "", label };
+}
+
+function defaultListingVariants(draft) {
+  const existing = new Map((draft.listingVariants || []).map((row) => [row.cjVariantId, row]));
+  return (draft.variants || []).filter((variant) => variant?.vid).map((variant) => {
+    const parts = splitVariantLabel(variant);
+    const existingRow = existing.get(variant.vid) || {};
+    return {
+      enabled: existingRow.enabled === true,
+      cjVariantId: variant.vid,
+      label: existingRow.label || parts.label,
+      quantity: existingRow.quantity ?? 1,
+      cost: existingRow.cost ?? null,
+      shippingCost: existingRow.shippingCost ?? null,
+      salePrice: existingRow.salePrice ?? null,
+      image: existingRow.image || variant.variantImage || variant.variantImg || draft.image,
+      cjShippingService: existingRow.cjShippingService || "",
+      aspects: {
+        Colour: existingRow.aspects?.Colour || parts.colour,
+        Size: existingRow.aspects?.Size || parts.size
+      }
+    };
+  });
+}
+
+function variantRowPricing(draft, row) {
+  const prepared = listingRows({ ...draft, multiVariation: true, listingVariants: [{ ...row, enabled: true }] })[0];
+  return { prepared, pricing: prepared ? draftPricing(prepared) : null };
+}
+
+function variationsMarkup(draft) {
+  if (!Array.isArray(draft.variants) || !draft.variants.some((item) => item?.vid)) return "";
+  const rows = defaultListingVariants(draft);
+  const enabledCount = rows.filter((row) => row.enabled).length;
+  return `
+    <section class="wide variation-builder" id="variationBuilder">
+      <label class="pricing-confirmation"><input name="multiVariation" type="checkbox" ${draft.multiVariation ? "checked" : ""} /> Publish as one eBay listing with colour/size variants</label>
+      <input type="hidden" name="variationAxes" value="Colour,Size" />
+      <input type="hidden" name="listingVariantsJson" value="${escapeAttr(JSON.stringify(rows))}" />
+      <div class="variation-toolbar">
+        <button type="button" class="secondary" id="selectCommonVariantsButton">Select common jacket sizes</button>
+        <button type="button" class="secondary" id="quoteVariantsButton">Refresh selected variant quotes</button>
+        <span id="variationStatus">${enabledCount ? `${enabledCount} selected` : "No variants selected"}</span>
+      </div>
+      <div class="variation-table">
+        ${rows.map((row, index) => {
+          const { pricing } = variantRowPricing(draft, row);
+          return `
+            <div class="variation-row" data-index="${index}">
+              <label><input type="checkbox" data-field="enabled" ${row.enabled ? "checked" : ""} /> Use</label>
+              <span>${escapeHtml(row.label)}</span>
+              <input data-field="colour" value="${escapeAttr(row.aspects?.Colour || "")}" aria-label="Colour" />
+              <input data-field="size" value="${escapeAttr(row.aspects?.Size || "")}" aria-label="Size" />
+              <input data-field="quantity" type="number" min="0" value="${escapeAttr(row.quantity ?? 1)}" aria-label="Quantity" />
+              <input data-field="cost" type="number" step="0.01" min="0" value="${row.cost ?? ""}" aria-label="Cost" />
+              <input data-field="shippingCost" type="number" step="0.01" min="0" value="${row.shippingCost ?? ""}" aria-label="Shipping cost" />
+              <span data-field="salePriceDisplay">${money(row.salePrice ?? variantRowPricing(draft, row).prepared?.salePrice)}</span>
+              <span data-field="marginDisplay">${pricing?.marginPercent == null ? "Margin ?" : `${pricing.marginPercent}%`}</span>
+            </div>
+          `;
+        }).join("")}
+      </div>
+      <label class="pricing-confirmation"><input name="sharedShippingConfirmed" type="checkbox" ${draft.sharedShippingConfirmed === true ? "checked" : ""} /> Every selected variation uses the same dispatch location and eBay postage policy; variant shipping differences are included in each item price</label>
+    </section>
+  `;
+}
+
 function renderEditor(draft) {
   const editor = $("#draftEditor");
   if (!draft) {
@@ -828,6 +901,7 @@ function renderEditor(draft) {
       <label>China to UK shipping (one item) <select name="cjShippingService" id="cjShippingSelect"><option value="${escapeAttr(draft.cjShippingService || "")}">${escapeHtml(draft.cjShippingService || "Select variant first")}</option></select></label>
       <button type="button" id="refreshCjQuoteButton">Refresh CJ prices</button>
       <p class="wide inline-status" id="cjQuoteStatus"></p>` : ""}
+      ${variationsMarkup(draft)}
       <label class="wide pricing-confirmation"><input name="autoPrice" type="checkbox" ${draft.autoPrice !== false ? "checked" : ""} /> Calculate sale price from target margin</label>
       <label>Target profit margin (%) <input name="targetMarginPercent" type="number" step="0.1" min="0.1" max="99.9" value="${draft.targetMarginPercent ?? 25}" /></label>
       <label>Sale price (GBP) <input name="salePrice" type="number" step="0.01" min="0" value="${draft.salePrice ?? ""}" /></label>
@@ -923,6 +997,87 @@ function renderEditor(draft) {
     shippingSelect.addEventListener("change", applyShipping);
     editor.elements.quotePostcode.addEventListener("change", refreshQuote);
     editor.querySelector("#refreshCjQuoteButton").addEventListener("click", refreshQuote);
+  }
+  const variationBuilder = editor.querySelector("#variationBuilder");
+  if (variationBuilder) {
+    const hiddenRows = editor.elements.listingVariantsJson;
+    const status = editor.querySelector("#variationStatus");
+    const rowElements = () => [...variationBuilder.querySelectorAll(".variation-row")];
+    const readRows = () => {
+      const previous = new Map((JSON.parse(hiddenRows.value || "[]")).map((row) => [row.cjVariantId, row]));
+      return rowElements().map((node) => {
+        const old = previous.get(defaultListingVariants(draft)[Number(node.dataset.index)]?.cjVariantId) || {};
+        const base = defaultListingVariants(draft)[Number(node.dataset.index)];
+        return {
+          ...old,
+          cjVariantId: base.cjVariantId,
+          label: base.label,
+          enabled: node.querySelector('[data-field="enabled"]').checked,
+          quantity: Number(node.querySelector('[data-field="quantity"]').value || 0),
+          cost: node.querySelector('[data-field="cost"]').value === "" ? null : Number(node.querySelector('[data-field="cost"]').value),
+          shippingCost: node.querySelector('[data-field="shippingCost"]').value === "" ? null : Number(node.querySelector('[data-field="shippingCost"]').value),
+          image: old.image || base.image,
+          cjShippingService: old.cjShippingService || "",
+          aspects: {
+            Colour: node.querySelector('[data-field="colour"]').value.trim(),
+            Size: node.querySelector('[data-field="size"]').value.trim()
+          }
+        };
+      });
+    };
+    const writeRows = (rows) => {
+      hiddenRows.value = JSON.stringify(rows);
+      const current = { ...draft, ...draftFormValues(editor) };
+      const selected = rows.filter((row) => row.enabled).length;
+      status.textContent = selected ? `${selected} selected` : "No variants selected";
+      rowElements().forEach((node, index) => {
+        const row = rows[index];
+        const { prepared, pricing } = variantRowPricing(current, row);
+        row.salePrice = prepared?.salePrice ?? row.salePrice ?? null;
+        node.querySelector('[data-field="salePriceDisplay"]').textContent = money(row.salePrice);
+        node.querySelector('[data-field="marginDisplay"]').textContent = pricing?.marginPercent == null ? "Margin ?" : `${pricing.marginPercent}%`;
+      });
+      hiddenRows.value = JSON.stringify(rows);
+      refreshPricing();
+    };
+    variationBuilder.addEventListener("input", () => writeRows(readRows()));
+    variationBuilder.addEventListener("change", () => writeRows(readRows()));
+    editor.querySelector("#selectCommonVariantsButton").addEventListener("click", () => {
+      const rows = readRows().map((row) => ({ ...row, enabled: /^(Black|Gray|Grey|Khaki|Army Green|Dark Blue)/i.test(row.aspects.Colour || "") && /^(M|L|XL|2XL|3XL)$/i.test(row.aspects.Size || "") }));
+      rowElements().forEach((node, index) => { node.querySelector('[data-field="enabled"]').checked = rows[index].enabled; });
+      writeRows(rows);
+    });
+    editor.querySelector("#quoteVariantsButton").addEventListener("click", async () => {
+      let rows = readRows();
+      const selected = rows.filter((row) => row.enabled);
+      if (!selected.length) { status.textContent = "Select at least two variants first."; return; }
+      status.textContent = `Quoting 0/${selected.length} variants...`;
+      let completed = 0;
+      for (const row of rows) {
+        if (!row.enabled) continue;
+        try {
+          const response = await fetch("/api/cj/price-quote", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pid: draft.cjProductId, vid: row.cjVariantId, postcode: editor.elements.quotePostcode?.value || "" }) });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || "CJ quote failed.");
+          const quotes = result.quotes || [];
+          const quote = quotes.find((item) => item.name === row.cjShippingService)
+            || quotes.find((item) => /yunexpress ordinary|cjpacket ordinary|luwei ordinary/i.test(item.name))
+            || quotes.slice().sort((a, b) => Number(a.price) - Number(b.price))[0];
+          row.cost = result.cost;
+          row.shippingCost = quote ? quote.price : null;
+          row.cjShippingService = quote?.name || "";
+          row.enabled = Boolean(quote);
+        } catch (error) {
+          row.enabled = false;
+          row.quoteError = error.message;
+        }
+        completed += 1;
+        status.textContent = `Quoting ${completed}/${selected.length} variants...`;
+        writeRows(rows);
+      }
+      status.textContent = "Variant quotes refreshed. Review prices and tick the shared shipping confirmation.";
+    });
+    writeRows(readRows());
   }
   const categoryResults = editor.querySelector("#ebayCategoryResults");
   const selectedCategory = editor.querySelector("#selectedEbayCategory");
@@ -1023,6 +1178,15 @@ function draftFormValues(form) {
   ["ebayCategorySearch", "ebayCategoryId", "ebayCategoryName"].forEach((key) => {
     if (body[key] != null) body[key] = String(body[key]).trim();
   });
+  body.multiVariation = formData.has("multiVariation");
+  body.sharedShippingConfirmed = formData.has("sharedShippingConfirmed");
+  body.variationAxes = String(body.variationAxes || "Colour,Size").split(",").map((item) => item.trim()).filter(Boolean);
+  try {
+    body.listingVariants = JSON.parse(body.listingVariantsJson || "[]");
+  } catch {
+    body.listingVariants = [];
+  }
+  delete body.listingVariantsJson;
   body.pricingReviewed = formData.has("pricingReviewed");
   body.autoPrice = formData.has("autoPrice");
   return body;
@@ -1078,6 +1242,24 @@ function collectImageUrls(urls, value) {
 }
 
 function validateClient(draft) {
+  if (draft.multiVariation) {
+    const rows = listingRows(draft);
+    const failures = [...variationErrors(draft)];
+    const checks = rows.map((row) => validateClient(row));
+    failures.push(...checks.flatMap((check, index) => check.failures.map((failure) => `${rows[index]?.label || rows[index]?.sku || `Variation ${index + 1}`}: ${failure}`)));
+    if (!/^\d+$/.test(draft.ebayCategoryId || "")) failures.push("Choose an eBay category.");
+    const margins = checks.map((check) => check.marginPercent).filter((value) => value != null);
+    return {
+      passed: failures.length === 0,
+      failures: [...new Set(failures)],
+      warnings: [...new Set(checks.flatMap((check) => check.warnings))],
+      landedCost: null,
+      estimatedFees: null,
+      margin: null,
+      marginPercent: margins.length ? Math.min(...margins) : null
+    };
+  }
+
   const pricing = draftPricing(draft);
   const { landedCost: landed, estimatedFees: fees, margin, marginPercent } = pricing;
   const failures = [...pricing.failures];

@@ -9,6 +9,7 @@ import { createAccessGuard } from "./access.mjs";
 import { accountRequestUrl, ebayErrorMessage } from "./ebay-request.mjs";
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./public/pricing.js";
 import { normalizeQuotes } from "./cj-quotes.mjs";
+import { listingRows, prepareListing, variationErrors, inventoryPayload, inventoryGroup, aspectMap } from "./public/listing.js";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -617,6 +618,12 @@ function makeDraftFromProduct(product) {
       Type: product.category,
       Condition: "New"
     },
+    ebayCategoryId: "",
+    ebayCategoryName: "",
+    multiVariation: false,
+    variationAxes: ["Colour", "Size"],
+    listingVariants: [],
+    sharedShippingConfirmed: false,
     warehouse: product.warehouse,
     quantity: Math.min(product.stock, 10),
     stock: product.stock,
@@ -658,6 +665,27 @@ function primaryProductGroup(product) {
 }
 
 function validateDraft(draft) {
+  if (draft.multiVariation) {
+    const rows = listingRows(draft);
+    const rowChecks = rows.map((row) => validateDraft(row));
+    const failures = [
+      ...variationErrors(draft),
+      ...rowChecks.flatMap((check, index) => check.failures.map((failure) => `${rows[index]?.label || rows[index]?.sku || `Variation ${index + 1}`}: ${failure}`))
+    ];
+    const margins = rowChecks.map((check) => check.marginPercent).filter((value) => value != null);
+    const warnings = [...new Set(rowChecks.flatMap((check) => check.warnings))];
+    if (!/^\d+$/.test(draft.ebayCategoryId || "")) failures.push("Choose an eBay category.");
+    return {
+      passed: failures.length === 0,
+      failures: [...new Set(failures)],
+      warnings,
+      landedCost: null,
+      estimatedFees: null,
+      margin: null,
+      marginPercent: margins.length ? Math.min(...margins) : null
+    };
+  }
+
   const pricing = draftPricing(draft);
   const { landedCost: landed, estimatedFees: fees, margin, marginPercent } = pricing;
   const text = `${draft.title} ${draft.description}`.toLowerCase();
@@ -665,6 +693,8 @@ function validateDraft(draft) {
   const foundBlocked = blockedTerms.filter((term) => text.includes(term));
   const warnings = [];
   const failures = [...pricing.failures];
+  if (!/^\d+$/.test(draft.ebayCategoryId || "")) failures.push("Choose an eBay category.");
+  if (!isSampleProduct(draft) && !draft.cjVariantId) failures.push("Select a CJ variant.");
   if (draft.autoPrice === true) {
     const target = targetSalePrice(draft);
     if (target.error) failures.push(target.error);
@@ -676,7 +706,7 @@ function validateDraft(draft) {
   if (!draft.description || draft.description.length < 40) failures.push("Description is too thin.");
   if (!draft.category) failures.push("Category is required.");
   if (!draft.quantity || draft.quantity < 1) failures.push("Quantity must be at least 1.");
-  if (draft.quantity > draft.stock) failures.push("Quantity is higher than CJ stock.");
+  if (draft.stock != null && draft.quantity > draft.stock) failures.push("Quantity is higher than CJ stock.");
   if (!draft.image) failures.push("At least one image is required.");
   if (!ebayImageUrlsForDraft(ensureDraftSupplierImage(draft))) failures.push("A real supplier image URL is required for eBay publishing.");
   if (marginPercent < 15) warnings.push("Margin is below the 15% target.");
@@ -696,10 +726,8 @@ function validateDraft(draft) {
 }
 
 function ebayCategoryIdForDraft(draft) {
-  const text = `${draft.title} ${draft.category} ${(draft.riskyTerms || []).join(" ")}`.toLowerCase();
-  if (text.includes("charger") || text.includes("charging") || text.includes("dock")) return "123417";
-  if (text.includes("cable") || text.includes("adapter") || text.includes("usb")) return "123422";
-  return process.env.EBAY_DEFAULT_CATEGORY_ID || "123422";
+  if (!/^\d+$/.test(draft.ebayCategoryId || "")) throw new Error("Choose an eBay category before publishing.");
+  return draft.ebayCategoryId;
 }
 
 function ebayImageUrlsForDraft(draft) {
@@ -722,29 +750,7 @@ function ebayListingDescription(draft) {
 }
 
 function ebayInventoryItemPayload(draft) {
-  const product = {
-    title: draft.title,
-    description: draft.description,
-    brand: "Unbranded",
-    mpn: "Does Not Apply",
-    aspects: {
-      Brand: ["Unbranded"],
-      MPN: ["Does Not Apply"],
-      Type: [draft.category || "Mobile Phone Accessory"]
-    }
-  };
-  const imageUrls = ebayImageUrlsForDraft(draft);
-  if (imageUrls) product.imageUrls = imageUrls;
-
-  return {
-    availability: {
-      shipToLocationAvailability: {
-        quantity: Number(draft.quantity)
-      }
-    },
-    condition: "NEW",
-    product
-  };
+  return inventoryPayload(draft, ebayImageUrlsForDraft(draft));
 }
 
 function ebayOfferPayload(draft) {
@@ -979,6 +985,42 @@ async function publishDraft(draft) {
 
 async function publishDraftToEbay(draft) {
   const token = await getUsableEbayToken();
+  if (draft.multiVariation) {
+    const rows = listingRows(draft);
+    for (const row of rows) {
+      await ebayApi(`/sell/inventory/v1/inventory_item/${encodeURIComponent(row.sku)}`, token, {
+        method: "PUT",
+        body: ebayInventoryItemPayload(row)
+      });
+    }
+
+    const groupKey = `CJ-${draft.id}`;
+    await ebayApi(`/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`, token, {
+      method: "PUT",
+      body: inventoryGroup(draft, rows)
+    });
+
+    const offers = [];
+    for (const row of rows) {
+      offers.push(await createOrGetEbayOffer(row, token));
+    }
+
+    const published = await ebayApi("/sell/inventory/v1/offer/publish_by_inventory_item_group", token, {
+      method: "POST",
+      body: {
+        inventoryItemGroupKey: groupKey,
+        marketplaceId: process.env.EBAY_MARKETPLACE_ID || "EBAY_GB"
+      }
+    });
+    return {
+      ok: true,
+      listingId: published.listingId || groupKey,
+      offerIds: offers.map((offer) => offer.offerId).filter(Boolean),
+      groupKey,
+      mode: ebayEnvironment()
+    };
+  }
+
   const sku = encodeURIComponent(draft.sku);
   await ebayApi(`/sell/inventory/v1/inventory_item/${sku}`, token, {
     method: "PUT",
@@ -1011,6 +1053,11 @@ async function createOrGetEbayOffer(draft, token) {
     const existing = await ebayApi(`/sell/inventory/v1/offer?sku=${encodeURIComponent(draft.sku)}`, token);
     const offer = existing.offers?.[0];
     if (!offer) throw new Error("eBay says the offer exists, but it was not returned by SKU lookup.");
+    if (offer.status === "PUBLISHED") throw new Error("This SKU is already published. Review the existing eBay listing before retrying.");
+    await ebayApi(`/sell/inventory/v1/offer/${encodeURIComponent(offer.offerId)}`, token, {
+      method: "PUT",
+      body: ebayOfferPayload(draft)
+    });
     return offer;
   }
 }
@@ -1692,7 +1739,7 @@ async function handleApi(req, res, url) {
 
       if (req.method === "PATCH" && !action) {
         const body = await readBody(req);
-        store.drafts[index] = applyTargetPrice({ ...store.drafts[index], ...body, updatedAt: new Date().toISOString() });
+        store.drafts[index] = prepareListing({ ...store.drafts[index], ...body, updatedAt: new Date().toISOString() });
         await saveStore(store);
         sendJson(res, 200, { draft: store.drafts[index], validation: validateDraft(store.drafts[index]) });
         return;
@@ -1715,6 +1762,8 @@ async function handleApi(req, res, url) {
           status: "published",
           ebayListingId: result.listingId,
           ebayOfferId: result.offerId || null,
+          ebayOfferIds: result.offerIds || [],
+          ebayGroupKey: result.groupKey || null,
           publishedMode: result.mode,
           publishedAt: new Date().toISOString()
         };

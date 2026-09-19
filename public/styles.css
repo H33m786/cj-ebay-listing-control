@@ -469,6 +469,61 @@ dd {
   color: var(--accent-strong);
 }
 
+.variation-builder {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+  display: grid;
+  gap: 12px;
+}
+
+.variation-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.variation-toolbar span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.variation-table {
+  display: grid;
+  gap: 6px;
+  max-height: 380px;
+  overflow: auto;
+}
+
+.variation-row {
+  display: grid;
+  grid-template-columns: 64px minmax(130px, 1.2fr) minmax(90px, 1fr) 70px 70px 90px 90px 92px 70px;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.variation-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+}
+
+.variation-row input {
+  min-height: 34px;
+  padding: 7px 8px;
+}
+
+.variation-row span {
+  overflow-wrap: anywhere;
+  font-size: 0.84rem;
+}
+
 .validation-box {
   border: 1px solid var(--line);
   border-radius: 8px;

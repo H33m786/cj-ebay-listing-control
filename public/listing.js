@@ -55,10 +55,12 @@ export function inventoryPayload(draft, images) {
 export function inventoryGroup(draft, rows) {
   const aspects = aspectMap(draft.itemSpecifics);
   for (const axis of draft.variationAxes) delete aspects[axis];
+  const variesBy = { specifications: draft.variationAxes.map((name) => ({ name, values: [...new Set(rows.map((row) => aspectMap(row.itemSpecifics)[name][0]))] })) };
+  if (draft.variationAxes.includes("Colour")) variesBy.aspectsImageVariesBy = ["Colour"];
   return { title: draft.title, description: draft.description, aspects,
     imageUrls: [...new Set([...(draft.supplierImages || []), ...rows.map((row) => row.image)].filter((url) => /^https:\/\//.test(url)))].slice(0, 24),
     variantSKUs: rows.map((row) => row.sku),
-    variesBy: { specifications: draft.variationAxes.map((name) => ({ name, values: [...new Set(rows.map((row) => aspectMap(row.itemSpecifics)[name][0]))] })) } };
+    variesBy };
 }
 
 export function categoryErrors(draft, schema) {

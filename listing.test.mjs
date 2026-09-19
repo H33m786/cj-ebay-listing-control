@@ -1,0 +1,46 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { inventoryGroup, listingRows, variationErrors } from "./public/listing.js";
+
+const draft = {
+  id: "draft-1",
+  sku: "CJ-JACKET",
+  title: "Men's Winter Cotton Jacket",
+  description: "A winter jacket with colour and size variants.",
+  itemSpecifics: { Brand: "Unbranded", Type: "Jacket" },
+  variationAxes: ["Colour", "Size"],
+  autoPrice: true,
+  targetMarginPercent: 15,
+  feePercent: 12.8,
+  feeFixed: 0.3,
+  usdToGbp: 1,
+  pricingReviewed: true,
+  listingVariants: [
+    { enabled: true, cjVariantId: "v1", label: "Grey-M", quantity: 2, cost: 20, shippingCost: 8, image: "https://example.com/grey.jpg", aspects: { Colour: "Grey", Size: "M" } },
+    { enabled: true, cjVariantId: "v2", label: "Black-L", quantity: 3, cost: 21, shippingCost: 9, image: "https://example.com/black.jpg", aspects: { Colour: "Black", Size: "L" } }
+  ]
+};
+
+test("inventory group declares variant SKUs and colour/size variation axes", () => {
+  const rows = listingRows({ ...draft, multiVariation: true });
+  const group = inventoryGroup(draft, rows);
+  assert.deepEqual(group.variantSKUs, ["CJ-JACKET-v1", "CJ-JACKET-v2"]);
+  assert.deepEqual(group.variesBy.aspectsImageVariesBy, ["Colour"]);
+  assert.deepEqual(group.variesBy.specifications, [
+    { name: "Colour", values: ["Grey", "Black"] },
+    { name: "Size", values: ["M", "L"] }
+  ]);
+});
+
+test("variation validation rejects duplicate attribute combinations", () => {
+  const errors = variationErrors({
+    ...draft,
+    multiVariation: true,
+    sharedShippingConfirmed: true,
+    listingVariants: [
+      draft.listingVariants[0],
+      { ...draft.listingVariants[1], aspects: { Colour: "Grey", Size: "M" } }
+    ]
+  });
+  assert.ok(errors.includes("Two variations have the same attribute combination."));
+});
