@@ -1193,7 +1193,7 @@ function renderEditor(draft) {
   if (variationBuilder) {
     const hiddenRows = editor.elements.listingVariantsJson;
     const status = editor.querySelector("#variationStatus");
-    const rowElements = () => [...variationBuilder.querySelectorAll(".variation-row")];
+    const rowElements = () => [...variationBuilder.querySelectorAll(".variation-row[data-index]")];
     const setInputValue = (node, field, value) => {
       const input = node.querySelector(`[data-field="${field}"]`);
       if (!input || document.activeElement === input) return;
@@ -1204,6 +1204,7 @@ function renderEditor(draft) {
       const defaults = defaultListingVariants(draft);
       return rowElements().map((node) => {
         const base = defaults[Number(node.dataset.index)];
+        if (!base) return null;
         const old = previous.get(base?.cjVariantId) || {};
         return {
           ...old,
@@ -1220,7 +1221,7 @@ function renderEditor(draft) {
             Size: node.querySelector('[data-field="size"]').value.trim()
           }
         };
-      });
+      }).filter(Boolean);
     };
     const paintRows = (rows, current) => {
       const selected = rows.filter((row) => row.enabled).length;
