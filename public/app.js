@@ -10,6 +10,7 @@ const state = {
   products: [],
   drafts: [],
   published: [],
+  research: null,
   selectedDraftId: null,
   selectedPublishedId: null,
   publishedSales: null,
@@ -485,6 +486,7 @@ const demoImageGalleries = {
 const viewCopy = {
   orders: ["Fulfilment", "eBay orders"],
   repricing: ["Pricing", "Price tracking"],
+  research: ["Market research", "Find product opportunities"],
   import: ["Supplier search", "Import CJ products"],
   drafts: ["Listing review", "Prepare eBay drafts"],
   published: ["Live catalogue", "Published listings"],
@@ -636,6 +638,34 @@ async function localApi(path, options, originalError) {
     };
   }
 
+  if (url.pathname === "/api/research/opportunities") {
+    const keyword = url.searchParams.get("keyword")?.toLowerCase() || "";
+    const category = url.searchParams.get("category") || "trending";
+    const terms = keyword ? [keyword] : [category, ...(categoryAliases[category] || [])].slice(0, 3);
+    const groups = terms.map((term) => {
+      const products = sampleProducts.filter((product) => matchesProduct(product, term) || matchesCategory(product, category)).slice(0, 3);
+      const prices = products.map((product) => Number((product.cost + product.shipping) * 2.2 + 4));
+      return {
+        term,
+        medianPrice: prices[0] || 24.99,
+        cjCount: products.length,
+        ebayItems: products.map((product) => ({ title: product.title, price: Number((product.cost + product.shipping) * 2.2 + 4), currency: "GBP", image: product.image, url: "" }))
+      };
+    });
+    const recommendations = groups.flatMap((group) => sampleProducts
+      .filter((product) => matchesProduct(product, group.term) || matchesCategory(product, category))
+      .slice(0, 4)
+      .map((product) => {
+        const landed = Number((product.cost + product.shipping).toFixed(2));
+        const market = group.medianPrice || 0;
+        const fees = estimateFees(market);
+        return { term: group.term, product, ebayMedianPrice: market, ebayExampleCount: group.ebayItems.length, landedEstimate: landed, estimatedFees: fees, roughMargin: Number((market - landed - fees).toFixed(2)), score: Number((market - landed).toFixed(2)), caution: "Sample recommendation. Use live eBay/CJ connections for production research." };
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 12);
+    return { category, keyword, marketplace: "sample", generatedAt: new Date().toISOString(), groups, recommendations };
+  }
+
   if (url.pathname === "/api/drafts" && (!options.method || options.method === "GET")) {
     return store;
   }
@@ -761,6 +791,92 @@ function renderProducts() {
     });
     grid.appendChild(node);
   });
+}
+
+async function loadResearch() {
+  const results = $("#researchResults");
+  const keyword = encodeURIComponent($("#researchKeywordInput").value.trim());
+  const category = encodeURIComponent($("#researchCategoryInput").value);
+  results.innerHTML = '<div class="empty-state">Checking eBay market prices and matching CJ products...</div>';
+  try {
+    state.research = await api(`/api/research/opportunities?keyword=${keyword}&category=${category}`);
+    renderResearch();
+  } catch (error) {
+    results.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderResearch() {
+  const results = $("#researchResults");
+  const research = state.research;
+  if (!research) {
+    results.innerHTML = '<div class="empty-state">Search a niche to compare live eBay prices against similar CJ products.</div>';
+    return;
+  }
+  results.innerHTML = `
+    <section class="research-panel">
+      <h3>eBay market snapshot</h3>
+      <div class="research-terms">
+        ${(research.groups || []).map((group) => `
+          <article class="research-term">
+            <strong>${escapeHtml(group.term)}</strong>
+            <span>${money(group.medianPrice)} median / ${group.ebayItems?.length || 0} eBay examples / ${group.cjCount || 0} CJ matches</span>
+            ${(group.ebayItems || []).slice(0, 3).map((item) => `<p class="meta">${escapeHtml(item.title)} / ${money(item.price, item.currency || "GBP")}${item.url ? ` / <a href="${escapeAttr(item.url)}" target="_blank" rel="noreferrer">View</a>` : ""}</p>`).join("")}
+          </article>
+        `).join("")}
+      </div>
+    </section>
+    <section class="research-panel">
+      <h3>Recommended CJ products to check</h3>
+      <div class="research-recommendations">
+        ${(research.recommendations || []).map((item, index) => researchRecommendationMarkup(item, index)).join("") || '<div class="empty-state">No CJ matches found. Try a broader search.</div>'}
+      </div>
+    </section>
+  `;
+  results.querySelectorAll("[data-research-index]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const recommendation = state.research.recommendations[Number(button.dataset.researchIndex)];
+      if (!recommendation?.product) return;
+      button.disabled = true;
+      button.textContent = "Creating draft...";
+      try {
+        const result = await api("/api/drafts", {
+          method: "POST",
+          body: JSON.stringify({ product: recommendation.product })
+        });
+        state.drafts.unshift(result.draft);
+        state.selectedDraftId = result.draft.id;
+        renderDrafts();
+        renderCounts();
+        setView("drafts");
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = "Create draft";
+        alert(error.message);
+      }
+    });
+  });
+}
+
+function researchRecommendationMarkup(item, index) {
+  const product = item.product || {};
+  return `
+    <article class="research-card">
+      ${productVisual(product)}
+      <div>
+        <p class="eyebrow">${escapeHtml(item.term || "Opportunity")}</p>
+        <h3>${escapeHtml(product.title || product.productNameEn || "CJ product")}</h3>
+        <div class="detail-metrics">
+          <div class="metric"><span>eBay median</span><strong>${money(item.ebayMedianPrice)}</strong></div>
+          <div class="metric"><span>CJ landed</span><strong>${money(item.landedEstimate)}</strong></div>
+          <div class="metric"><span>Rough margin</span><strong>${money(item.roughMargin)}</strong></div>
+          <div class="metric"><span>Score</span><strong>${escapeHtml(item.score ?? "0")}</strong></div>
+        </div>
+        ${item.caution ? `<p class="inline-status">${escapeHtml(item.caution)}</p>` : ""}
+        <button type="button" data-research-index="${index}">Create draft</button>
+      </div>
+    </article>
+  `;
 }
 
 function renderDrafts() {
@@ -1946,6 +2062,11 @@ $("#searchForm").addEventListener("submit", async (event) => {
   await loadProducts();
 });
 
+$("#researchForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await loadResearch();
+});
+
 $("#categoryInput").addEventListener("change", async () => {
   syncCategoryChips();
   await loadProducts();
@@ -1966,7 +2087,7 @@ function syncCategoryChips() {
   });
 }
 
-$("#refreshButton").addEventListener("click", () => $("#ordersView").classList.contains("active") ? ordersView.load() : $("#repricingView").classList.contains("active") ? repricingView.load() : loadAll());
+$("#refreshButton").addEventListener("click", () => $("#ordersView").classList.contains("active") ? ordersView.load() : $("#repricingView").classList.contains("active") ? repricingView.load() : $("#researchView").classList.contains("active") ? loadResearch() : loadAll());
 
 loadAll().catch((error) => {
   $("#productGrid").innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;

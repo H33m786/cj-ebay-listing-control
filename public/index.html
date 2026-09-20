@@ -15,6 +15,7 @@
         </div>
         <nav class="nav-tabs" aria-label="Workspace">
           <button class="nav-tab active" data-view="import">Import</button>
+          <button class="nav-tab" data-view="research">Research</button>
           <button class="nav-tab" data-view="drafts">Drafts <span id="draftCount">0</span></button>
           <button class="nav-tab" data-view="published">Published <span id="publishedCount">0</span></button>
           <button class="nav-tab" data-view="settings">Settings</button>
@@ -75,6 +76,30 @@
             <button type="button" class="category-chip" data-category="travel">Travel</button>
           </div>
           <div class="product-grid" id="productGrid"></div>
+        </section>
+
+        <section class="view" id="researchView">
+          <form class="toolbar" id="researchForm">
+            <label>
+              Niche or product
+              <input id="researchKeywordInput" name="keyword" placeholder="winter jacket, usb charger..." />
+            </label>
+            <label>
+              Research category
+              <select id="researchCategoryInput" name="category">
+                <option value="trending">Trending</option>
+                <option value="fashion">Fashion</option>
+                <option value="electronics">Electronics</option>
+                <option value="home">Home</option>
+                <option value="fitness">Fitness</option>
+                <option value="travel">Travel</option>
+              </select>
+            </label>
+            <button type="submit">Find opportunities</button>
+          </form>
+          <div class="research-grid" id="researchResults">
+            <div class="empty-state">Search a niche to compare live eBay prices against similar CJ products.</div>
+          </div>
         </section>
 
         <section class="view split-view" id="draftsView">

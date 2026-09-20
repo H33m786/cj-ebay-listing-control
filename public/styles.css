@@ -473,6 +473,74 @@ dd {
   color: var(--accent-strong);
 }
 
+.research-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.research-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  box-shadow: var(--shadow);
+}
+
+.research-terms {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.research-term,
+.research-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfcfb;
+}
+
+.research-term strong,
+.research-term span {
+  display: block;
+}
+
+.research-term span {
+  color: var(--muted);
+  margin: 4px 0 10px;
+}
+
+.research-recommendations {
+  display: grid;
+  gap: 12px;
+}
+
+.research-card {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.research-card img,
+.research-card .product-visual {
+  width: 110px;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.research-card button {
+  margin-top: 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #ffffff;
+  min-height: 42px;
+  padding: 9px 14px;
+  font-weight: 800;
+}
+
 .variation-builder {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1015,7 +1083,9 @@ pre {
   .split-view.active,
   .published-view.active,
   .settings-grid,
-  .editor-grid {
+  .editor-grid,
+  .research-terms,
+  .research-card {
     grid-template-columns: 1fr;
   }
 

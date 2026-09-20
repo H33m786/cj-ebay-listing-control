@@ -28,6 +28,7 @@ const statePath = path.join(dataDir, "ebay-oauth-state.json");
 const port = Number(process.env.PORT || 5173);
 const accessGuard = createAccessGuard(process.env);
 const { readFile, writeFile, withJobLock } = await createStorage(dataDir, process.env.DATABASE_URL);
+let ebayAppTokenCache = null;
 
 const jsonHeaders = { "content-type": "application/json; charset=utf-8" };
 const htmlHeaders = { "content-type": "text/html; charset=utf-8" };
@@ -824,6 +825,86 @@ async function fetchCjProducts(url) {
   return { live: false, products };
 }
 
+const researchSeeds = {
+  trending: ["wireless charger", "crossbody bag", "led desk lamp", "winter jacket", "storage rack"],
+  fashion: ["mens jacket", "crossbody bag", "beanie hat", "tote bag"],
+  electronics: ["usb c charger", "charging cable", "wireless charger", "led desk lamp"],
+  home: ["storage rack", "kitchen organiser", "led lamp", "silicone mat"],
+  fitness: ["resistance bands", "yoga mat", "fitness strap"],
+  travel: ["travel organiser", "packing cubes", "crossbody bag"]
+};
+
+async function researchOpportunities(url) {
+  const keyword = url.searchParams.get("keyword")?.trim() || "";
+  const category = url.searchParams.get("category") || "trending";
+  const terms = keyword ? [keyword] : researchSeeds[category] || researchSeeds.trending;
+  const token = await getEbayAppToken();
+  const groups = [];
+  const recommendations = [];
+  for (const term of terms.slice(0, 5)) {
+    const ebayItems = await searchEbayMarket(term, token);
+    const ebayPrices = ebayItems.map((item) => item.price).filter((price) => price > 0).sort((a, b) => a - b);
+    const medianPrice = ebayPrices.length ? ebayPrices[Math.floor(ebayPrices.length / 2)] : null;
+    const cjUrl = new URL("http://local/api/products");
+    cjUrl.searchParams.set("keyword", term);
+    const cjResult = await fetchCjProducts(cjUrl);
+    const cjProducts = (cjResult.products || []).slice(0, 8);
+    groups.push({ term, medianPrice, ebayItems: ebayItems.slice(0, 5), cjCount: cjProducts.length });
+    for (const product of cjProducts) {
+      const landed = Number((Number(product.cost || 0) + Number(product.shipping || 0)).toFixed(2));
+      const market = medianPrice || ebayItems[0]?.price || 0;
+      const fees = market ? estimateFees(market) : 0;
+      const roughMargin = Number((market - landed - fees).toFixed(2));
+      const match = titleMatchScore(term, product.title || product.productNameEn || "");
+      recommendations.push({
+        term,
+        product,
+        ebayMedianPrice: medianPrice,
+        ebayExampleCount: ebayItems.length,
+        landedEstimate: landed || null,
+        estimatedFees: market ? fees : null,
+        roughMargin: market ? roughMargin : null,
+        score: Number(((roughMargin || 0) + match * 8 + Math.min(Number(product.stock || 0), 50) / 20).toFixed(2)),
+        caution: !Number(product.shipping || 0) ? "CJ shipping quote needed before trusting margin." : ""
+      });
+    }
+  }
+  recommendations.sort((a, b) => b.score - a.score);
+  return {
+    category,
+    keyword,
+    marketplace: process.env.EBAY_MARKETPLACE_ID || "EBAY_GB",
+    generatedAt: new Date().toISOString(),
+    groups,
+    recommendations: recommendations.slice(0, 12)
+  };
+}
+
+async function searchEbayMarket(term, token) {
+  const query = new URLSearchParams({
+    q: term,
+    limit: "12",
+    filter: "buyingOptions:{FIXED_PRICE},conditions:{NEW}"
+  });
+  const result = await ebayApi(`/buy/browse/v1/item_summary/search?${query}`, token);
+  return (result.itemSummaries || []).map((item) => ({
+    itemId: item.itemId,
+    title: item.title || "eBay item",
+    price: Number(item.price?.value || 0),
+    currency: item.price?.currency || "GBP",
+    image: item.image?.imageUrl || "",
+    url: item.itemWebUrl || "",
+    seller: item.seller?.username || ""
+  })).filter((item) => item.price > 0);
+}
+
+function titleMatchScore(term, title) {
+  const titleWords = new Set(String(title || "").toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2));
+  const words = String(term || "").toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2);
+  if (!words.length) return 0;
+  return words.filter((word) => titleWords.has(word)).length / words.length;
+}
+
 function normalizeCjProduct(product) {
   const supplierImages = imageUrlList(
     product.image,
@@ -1364,6 +1445,32 @@ async function getUsableEbayToken() {
   return ebayTokenIsFresh(token) ? token : refreshEbayToken(token);
 }
 
+async function getEbayAppToken() {
+  const status = ebayConfigStatus();
+  if (!status.clientIdReady || !status.clientSecretReady) throw new Error("Set eBay App ID and Cert ID before using product research.");
+  if (ebayAppTokenCache?.access_token && Date.now() < ebayAppTokenCache.expiresAt - 60_000) return ebayAppTokenCache;
+  const credentials = Buffer.from(`${process.env.EBAY_CLIENT_ID}:${process.env.EBAY_CLIENT_SECRET}`).toString("base64");
+  const response = await fetch(ebayTokenEndpoint(), {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      authorization: `Basic ${credentials}`
+    },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      scope: "https://api.ebay.com/oauth/api_scope"
+    })
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error_description || body.error || `eBay app token failed with ${response.status}`);
+  ebayAppTokenCache = {
+    access_token: body.access_token,
+    token_type: body.token_type,
+    expiresAt: Date.now() + Number(body.expires_in || 0) * 1000
+  };
+  return ebayAppTokenCache;
+}
+
 async function ebayApi(pathname, token, options = {}) {
   const url = accountRequestUrl(pathname, ebayApiBaseUrl(), process.env.EBAY_MARKETPLACE_ID || "EBAY_GB", options.method || "GET");
   const response = await fetch(url, {
@@ -1812,6 +1919,15 @@ async function handleApi(req, res, url) {
 
     if (req.method === "GET" && url.pathname === "/api/products") {
       sendJson(res, 200, await fetchCjProducts(url));
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/research/opportunities") {
+      try {
+        sendJson(res, 200, await researchOpportunities(url));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
       return;
     }
 
