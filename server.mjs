@@ -9,7 +9,7 @@ import { createAccessGuard } from "./access.mjs";
 import { accountRequestUrl, ebayErrorMessage } from "./ebay-request.mjs";
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./public/pricing.js";
 import { normalizeQuotes } from "./cj-quotes.mjs";
-import { listingRows, mainListingRowIndex, prepareListing, variationErrors, inventoryPayload, inventoryGroup, aspectMap } from "./public/listing.js";
+import { listingRows, mainListingRowIndex, prepareListing, variationErrors, inventoryPayload, inventoryGroup, aspectMap, categoryErrors } from "./public/listing.js";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -778,6 +778,32 @@ function ebayOfferPayload(draft) {
   };
 }
 
+async function ebayCategorySchema(categoryId, token) {
+  const marketplace = process.env.EBAY_MARKETPLACE_ID || "EBAY_GB";
+  const tree = await ebayApi(`/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id=${marketplace}`, token);
+  const result = await ebayApi(`/commerce/taxonomy/v1/category_tree/${tree.categoryTreeId}/get_item_aspects_for_category?category_id=${encodeURIComponent(categoryId)}`, token);
+  const aspects = (result.aspects || []).map((aspect) => ({
+    localizedAspectName: aspect.localizedAspectName,
+    aspectValues: aspect.aspectValues || [],
+    aspectConstraint: aspect.aspectConstraint || {}
+  }));
+  return {
+    categoryId,
+    variationsSupported: aspects.some((aspect) => aspect.aspectConstraint?.aspectEnabledForVariations),
+    aspects
+  };
+}
+
+async function ebayCategoryFailures(draft, token) {
+  if (!draft.multiVariation) return [];
+  if (!draft.ebayCategoryId) return ["Choose an eBay category."];
+  try {
+    return categoryErrors(draft, await ebayCategorySchema(draft.ebayCategoryId, token));
+  } catch (error) {
+    return [`Could not confirm eBay category rules before publishing: ${error.message}`];
+  }
+}
+
 async function fetchCjProducts(url) {
   const keyword = url.searchParams.get("keyword")?.trim().toLowerCase() || "";
   const category = url.searchParams.get("category") || "";
@@ -974,7 +1000,19 @@ async function publishDraft(draft) {
     if (missing.length) {
       return { ok: false, error: `Live eBay publishing is missing: ${missing.join(", ")}` };
     }
-    return publishDraftToEbay(draft);
+    const token = await getUsableEbayToken();
+    const categoryFailures = await ebayCategoryFailures(draft, token);
+    if (categoryFailures.length) {
+      return {
+        ok: false,
+        validation: {
+          ...validation,
+          passed: false,
+          failures: [...new Set([...validation.failures, ...categoryFailures])]
+        }
+      };
+    }
+    return publishDraftToEbay(draft, token);
   }
 
   return {
@@ -984,35 +1022,35 @@ async function publishDraft(draft) {
   };
 }
 
-async function publishDraftToEbay(draft) {
-  const token = await getUsableEbayToken();
+async function publishDraftToEbay(draft, token = null) {
+  token ||= await getUsableEbayToken();
   if (draft.multiVariation) {
     const rows = listingRows(draft);
     for (const row of rows) {
-      await ebayApi(`/sell/inventory/v1/inventory_item/${encodeURIComponent(row.sku)}`, token, {
+      await ebayStage(`uploading inventory item ${row.label || row.sku}`, () => ebayApi(`/sell/inventory/v1/inventory_item/${encodeURIComponent(row.sku)}`, token, {
         method: "PUT",
         body: ebayInventoryItemPayload(row)
-      });
+      }));
     }
 
     const groupKey = `CJ-${draft.id}`;
-    await ebayApi(`/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`, token, {
+    await ebayStage("creating eBay variation group", () => ebayApi(`/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`, token, {
       method: "PUT",
       body: inventoryGroup(draft, rows)
-    });
+    }));
 
     const offers = [];
     for (const row of rows) {
-      offers.push(await createOrGetEbayOffer(row, token));
+      offers.push(await ebayStage(`creating offer for ${row.label || row.sku}`, () => createOrGetEbayOffer(row, token)));
     }
 
-    const published = await ebayApi("/sell/inventory/v1/offer/publish_by_inventory_item_group", token, {
+    const published = await ebayStage("publishing the eBay variation group", () => ebayApi("/sell/inventory/v1/offer/publish_by_inventory_item_group", token, {
       method: "POST",
       body: {
         inventoryItemGroupKey: groupKey,
         marketplaceId: process.env.EBAY_MARKETPLACE_ID || "EBAY_GB"
       }
-    });
+    }));
     return {
       ok: true,
       listingId: published.listingId || groupKey,
@@ -1023,18 +1061,18 @@ async function publishDraftToEbay(draft) {
   }
 
   const sku = encodeURIComponent(draft.sku);
-  await ebayApi(`/sell/inventory/v1/inventory_item/${sku}`, token, {
+  await ebayStage("uploading inventory item", () => ebayApi(`/sell/inventory/v1/inventory_item/${sku}`, token, {
     method: "PUT",
     body: ebayInventoryItemPayload(draft)
-  });
+  }));
 
-  const offer = await createOrGetEbayOffer(draft, token);
+  const offer = await ebayStage("creating eBay offer", () => createOrGetEbayOffer(draft, token));
   const offerId = offer.offerId;
   if (!offerId) throw new Error("eBay created the offer but did not return an offerId.");
 
-  const published = await ebayApi(`/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/publish`, token, {
+  const published = await ebayStage("publishing eBay offer", () => ebayApi(`/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/publish`, token, {
     method: "POST"
-  });
+  }));
   return {
     ok: true,
     listingId: published.listingId || offerId,
@@ -1060,6 +1098,14 @@ async function createOrGetEbayOffer(draft, token) {
       body: ebayOfferPayload(draft)
     });
     return offer;
+  }
+}
+
+async function ebayStage(stage, action) {
+  try {
+    return await action();
+  } catch (error) {
+    throw new Error(`eBay failed while ${stage}: ${error.message}`);
   }
 }
 

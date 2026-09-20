@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { inventoryGroup, listingRows, mainListingRowIndex, variationErrors } from "./public/listing.js";
+import { categoryErrors, inventoryGroup, listingRows, mainListingRowIndex, variationErrors } from "./public/listing.js";
 import { draftPricing } from "./public/pricing.js";
 
 const draft = {
@@ -58,4 +58,17 @@ test("main listing summary uses the selected top-level variant", () => {
   const rows = listingRows({ ...draft, multiVariation: true, cjVariantId: "v2" });
   assert.equal(mainListingRowIndex({ ...draft, cjVariantId: "v2" }, rows), 1);
   assert.equal(mainListingRowIndex({ ...draft, cjVariantId: "missing" }, rows), 0);
+});
+
+test("category validation rejects unsupported variation axes before eBay publish", () => {
+  const errors = categoryErrors({ ...draft, multiVariation: true, ebayCategoryId: "123" }, {
+    categoryId: "123",
+    variationsSupported: true,
+    aspects: [
+      { localizedAspectName: "Colour", aspectConstraint: { aspectEnabledForVariations: true } },
+      { localizedAspectName: "Brand", aspectConstraint: {} },
+      { localizedAspectName: "Type", aspectConstraint: {} }
+    ]
+  });
+  assert.ok(errors.includes("Size is not a supported variation attribute in this category."));
 });
