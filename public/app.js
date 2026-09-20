@@ -1346,18 +1346,27 @@ function renderPublished() {
   }
   list.innerHTML = state.published
     .map(
-      (item) => `
+      (item) => {
+        const listingId = String(item.ebayListingId || "");
+        const listingUrl = /^\d+$/.test(listingId)
+          ? `${item.publishedMode === "sandbox" ? "https://sandbox.ebay.com/itm/" : "https://www.ebay.co.uk/itm/"}${encodeURIComponent(listingId)}`
+          : "";
+        return `
       <article class="published-item">
         ${productVisual(item)}
         <div>
           <h3>${escapeHtml(item.title)}</h3>
           <p class="meta">${item.sku} / ${money(item.salePrice)} / ${item.quantity} units</p>
-          <p class="meta">eBay listing: ${item.ebayListingId}</p>
+          <p class="meta">eBay listing: ${escapeHtml(listingId || "Not returned")}${listingUrl ? ` / <a href="${escapeAttr(listingUrl)}" target="_blank" rel="noreferrer">Open on eBay</a>` : " / No public item link returned yet"}</p>
           ${item.ebayOfferId ? `<p class="meta">eBay offer: ${escapeHtml(item.ebayOfferId)}</p>` : ""}
+          ${item.ebayOfferIds?.length ? `<p class="meta">eBay offers: ${item.ebayOfferIds.map(escapeHtml).join(", ")}</p>` : ""}
+          ${item.ebayGroupKey ? `<p class="meta">Variation group: ${escapeHtml(item.ebayGroupKey)}</p>` : ""}
+          ${Array.isArray(item.ebayPublishDetails) && item.ebayPublishDetails.length ? `<p class="meta">eBay status: ${item.ebayPublishVerified ? "Verified published" : "Returned by publish call; not verified in offer lookup yet"}</p>` : ""}
         </div>
         <span class="badge">${item.publishedMode === "simulated" ? "Simulated" : item.publishedMode === "sandbox" ? "Sandbox" : "Live"}</span>
       </article>
-    `
+    `;
+      }
     )
     .join("");
 }

@@ -1054,11 +1054,15 @@ async function publishDraftToEbay(draft, token = null) {
         marketplaceId: process.env.EBAY_MARKETPLACE_ID || "EBAY_GB"
       }
     }));
+    const verification = await verifyPublishedOffers(rows.map((row) => row.sku), token);
+    const verifiedListingId = verification.listingIds[0] || null;
     return {
       ok: true,
-      listingId: published.listingId || groupKey,
+      listingId: published.listingId || verifiedListingId || groupKey,
       offerIds: offers.map((offer) => offer.offerId).filter(Boolean),
       groupKey,
+      publishVerified: verification.allPublished,
+      publishDetails: verification.details,
       mode: ebayEnvironment()
     };
   }
@@ -1076,10 +1080,13 @@ async function publishDraftToEbay(draft, token = null) {
   const published = await ebayStage("publishing eBay offer", () => ebayApi(`/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/publish`, token, {
     method: "POST"
   }));
+  const verification = await verifyPublishedOffers([draft.sku], token);
   return {
     ok: true,
-    listingId: published.listingId || offerId,
+    listingId: published.listingId || verification.listingIds[0] || offerId,
     offerId,
+    publishVerified: verification.allPublished,
+    publishDetails: verification.details,
     mode: ebayEnvironment()
   };
 }
@@ -1110,6 +1117,27 @@ async function ebayStage(stage, action) {
   } catch (error) {
     throw new Error(`eBay failed while ${stage}: ${error.message}`);
   }
+}
+
+async function verifyPublishedOffers(skus, token) {
+  const details = [];
+  const listingIds = [];
+  for (const sku of skus) {
+    try {
+      const existing = await ebayApi(`/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}`, token);
+      const offer = existing.offers?.[0];
+      const listingId = offer?.listing?.listingId || offer?.listingId || "";
+      if (listingId) listingIds.push(listingId);
+      details.push({ sku, status: offer?.status || "UNKNOWN", offerId: offer?.offerId || null, listingId: listingId || null });
+    } catch (error) {
+      details.push({ sku, status: "VERIFY_FAILED", message: error.message });
+    }
+  }
+  return {
+    allPublished: details.length > 0 && details.every((item) => item.status === "PUBLISHED"),
+    listingIds: [...new Set(listingIds)],
+    details
+  };
 }
 
 function ebayEnvironment() {
@@ -1814,6 +1842,8 @@ async function handleApi(req, res, url) {
           ebayOfferId: result.offerId || null,
           ebayOfferIds: result.offerIds || [],
           ebayGroupKey: result.groupKey || null,
+          ebayPublishVerified: result.publishVerified === true,
+          ebayPublishDetails: result.publishDetails || [],
           publishedMode: result.mode,
           publishedAt: new Date().toISOString()
         };
