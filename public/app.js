@@ -1,5 +1,6 @@
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./pricing.js";
 import { listingRows, mainListingRowIndex, variationErrors, categoryErrors } from "./listing.js";
+import { buildDraftDescription } from "./description.js";
 import { createOrdersView } from "./orders.js";
 const ordersView = createOrdersView(document.querySelector("#ordersView"));
 import { createRepricingView } from "./repricing.js";
@@ -542,7 +543,7 @@ function makeHostedDraft(product) {
     cjProductId: product.pid,
     sku: `${product.sku}-${Date.now().toString().slice(-5)}`,
     title: product.title,
-    description: `${product.title}. Shipped by supplier from ${product.warehouse} warehouse. Confirm shipping estimates before publishing.`,
+    description: buildDraftDescription(product),
     category: product.category,
     itemSpecifics: {
       Brand: "Unbranded",

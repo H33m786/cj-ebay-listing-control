@@ -10,6 +10,7 @@ import { accountRequestUrl, ebayErrorMessage } from "./ebay-request.mjs";
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./public/pricing.js";
 import { normalizeQuotes } from "./cj-quotes.mjs";
 import { listingRows, mainListingRowIndex, prepareListing, variationErrors, inventoryPayload, inventoryGroup, aspectMap, categoryErrors } from "./public/listing.js";
+import { buildDraftDescription, buildEbayListingDescription } from "./public/description.js";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -611,7 +612,7 @@ function makeDraftFromProduct(product) {
     cjProductId: product.pid,
     sku: `${product.sku}-${Date.now().toString().slice(-5)}`,
     title: product.title,
-    description: `${product.title}. Shipped by supplier from ${product.warehouse} warehouse. Confirm shipping estimates before publishing.`,
+    description: buildDraftDescription(product),
     category: product.category,
     itemSpecifics: {
       Brand: "Unbranded",
@@ -738,16 +739,7 @@ function ebayImageUrlsForDraft(draft) {
 
 function ebayListingDescription(draft) {
   const imageCount = ebayImageUrlsForDraft(draft)?.length || 0;
-  return [
-    draft.description,
-    "",
-    "Condition: New.",
-    "Brand: Unbranded.",
-    imageCount > 1 ? `Gallery: ${imageCount} supplier images included.` : "",
-    "Dispatch and delivery estimates are based on supplier data and should be checked before production use."
-  ]
-    .filter(Boolean)
-    .join("\n");
+  return buildEbayListingDescription(draft, imageCount);
 }
 
 function ebayInventoryItemPayload(draft) {
