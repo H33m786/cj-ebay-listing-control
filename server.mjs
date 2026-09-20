@@ -616,6 +616,9 @@ function makeDraftFromProduct(product) {
     itemSpecifics: {
       Brand: "Unbranded",
       Type: product.category,
+      Department: "Men",
+      Style: product.category || "Jacket",
+      "Outer Shell Material": "Polyester",
       Condition: "New"
     },
     ebayCategoryId: "",

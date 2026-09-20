@@ -544,6 +544,9 @@ function makeHostedDraft(product) {
     itemSpecifics: {
       Brand: "Unbranded",
       Type: product.category,
+      Department: "Men",
+      Style: product.category || "Jacket",
+      "Outer Shell Material": "Polyester",
       Condition: "New"
     },
     warehouse: product.warehouse,
@@ -874,6 +877,20 @@ function variationsMarkup(draft) {
   `;
 }
 
+function itemSpecificsMarkup(draft) {
+  const specifics = { Brand: "Unbranded", Type: draft.category || "Jacket", Department: "Men", Style: "Jacket", "Outer Shell Material": "Polyester", ...(draft.itemSpecifics || {}) };
+  return `
+    <fieldset class="wide item-specifics">
+      <legend>eBay item specifics</legend>
+      <label>Brand <input name="specific.Brand" value="${escapeAttr(specifics.Brand || "")}" /></label>
+      <label>Type <input name="specific.Type" value="${escapeAttr(specifics.Type || "")}" /></label>
+      <label>Department <input name="specific.Department" value="${escapeAttr(specifics.Department || "")}" /></label>
+      <label>Style <input name="specific.Style" value="${escapeAttr(specifics.Style || "")}" /></label>
+      <label>Outer Shell Material <input name="specific.Outer Shell Material" value="${escapeAttr(specifics["Outer Shell Material"] || "")}" /></label>
+    </fieldset>
+  `;
+}
+
 function renderEditor(draft) {
   const editor = $("#draftEditor");
   if (!draft) {
@@ -919,6 +936,7 @@ function renderEditor(draft) {
       <label>Handling days <input name="handlingDays" type="number" min="1" value="${draft.handlingDays}" /></label>
       <label>Delivery estimate <input name="deliveryDays" type="number" min="1" value="${draft.deliveryDays}" /></label>
       <label class="wide">Description <textarea name="description">${escapeHtml(draft.description)}</textarea></label>
+      ${itemSpecificsMarkup(draft)}
       <label class="wide">Image URL <input name="image" value="${escapeAttr(draft.image)}" /></label>
       ${supplierGalleryMarkup(draft)}
     </div>
@@ -1215,6 +1233,14 @@ function draftFormValues(form) {
     body.listingVariants = [];
   }
   delete body.listingVariantsJson;
+  body.itemSpecifics = {};
+  for (const [key, value] of formData.entries()) {
+    if (key.startsWith("specific.")) {
+      const name = key.slice("specific.".length);
+      if (String(value).trim()) body.itemSpecifics[name] = String(value).trim();
+      delete body[key];
+    }
+  }
   body.pricingReviewed = formData.has("pricingReviewed");
   body.autoPrice = formData.has("autoPrice");
   return body;
