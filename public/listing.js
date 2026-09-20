@@ -8,7 +8,7 @@ export function listingRows(draft) {
   if (!draft.multiVariation) return [draft];
   return (draft.listingVariants || []).filter((row) => row.enabled).map((row) => applyTargetPrice({
     ...draft, ...row, multiVariation: false, listingVariants: undefined,
-    costCurrency: "USD", autoPrice: draft.autoPrice, targetMarginPercent: draft.targetMarginPercent,
+    costCurrency: row.costCurrency || draft.costCurrency || "USD", autoPrice: draft.autoPrice, targetMarginPercent: draft.targetMarginPercent,
     feePercent: draft.feePercent, feeFixed: draft.feeFixed, usdToGbp: draft.usdToGbp,
     otherCostsGbp: draft.otherCostsGbp,
     sku: `${draft.sku}-${row.cjVariantId}`,

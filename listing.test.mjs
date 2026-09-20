@@ -54,6 +54,21 @@ test("variant rows calculate sale prices independently from the target margin", 
   assert.ok(draftPricing(rows[1]).marginPercent >= draft.targetMarginPercent);
 });
 
+test("manual variant rows inherit the draft supplier currency", () => {
+  const rows = listingRows({
+    ...draft,
+    multiVariation: true,
+    costCurrency: "GBP",
+    usdToGbp: null,
+    listingVariants: [
+      { ...draft.listingVariants[0], costCurrency: null }
+    ]
+  });
+  assert.equal(rows[0].costCurrency, "GBP");
+  assert.equal(rows[0].salePrice, 39.2);
+  assert.equal(draftPricing(rows[0]).failures.includes("Enter the GBP amount charged per USD, including conversion charges."), false);
+});
+
 test("main listing summary uses the selected top-level variant", () => {
   const rows = listingRows({ ...draft, multiVariation: true, cjVariantId: "v2" });
   assert.equal(mainListingRowIndex({ ...draft, cjVariantId: "v2" }, rows), 1);

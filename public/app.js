@@ -825,6 +825,7 @@ function defaultListingVariants(draft) {
       cost: existingRow.cost ?? null,
       shippingCost: existingRow.shippingCost ?? null,
       salePrice: existingRow.salePrice ?? null,
+      costCurrency: existingRow.costCurrency || null,
       image: existingRow.image || variant.variantImage || variant.variantImg || draft.image,
       cjShippingService: existingRow.cjShippingService || "",
       aspects: {
@@ -838,6 +839,16 @@ function defaultListingVariants(draft) {
 function variantRowPricing(draft, row) {
   const prepared = listingRows({ ...draft, multiVariation: true, listingVariants: [{ ...row, enabled: true }] })[0];
   return { prepared, pricing: prepared ? draftPricing(prepared) : null };
+}
+
+function variantMarginText(prepared, pricing) {
+  if (!prepared || !pricing) return "Not calculated";
+  if (pricing.marginPercent != null) return `${pricing.marginPercent}%`;
+  const failure = pricing.failures.find((item) => item.includes("GBP amount charged per USD"))
+    || pricing.failures.find((item) => item.includes("item and shipping costs"))
+    || pricing.failures.find((item) => item.includes("positive GBP sale price"))
+    || pricing.failures[0];
+  return failure || "Not calculated";
 }
 
 function variationsMarkup(draft) {
@@ -868,7 +879,7 @@ function variationsMarkup(draft) {
               <input data-field="shippingCost" type="number" step="0.01" min="0" value="${row.shippingCost ?? ""}" aria-label="Shipping cost" />
               <span data-field="shippingServiceDisplay">${escapeHtml(row.cjShippingService || "Quote needed")}</span>
               <span data-field="salePriceDisplay">${money(row.salePrice ?? variantRowPricing(draft, row).prepared?.salePrice)}</span>
-              <span data-field="marginDisplay">${pricing?.marginPercent == null ? "Margin ?" : `${pricing.marginPercent}%`}</span>
+              <span data-field="marginDisplay">${escapeHtml(variantMarginText(variantRowPricing(draft, row).prepared, pricing))}</span>
             </div>
           `;
         }).join("")}
@@ -1098,7 +1109,7 @@ function renderEditor(draft) {
         row.salePrice = prepared?.salePrice ?? row.salePrice ?? null;
         node.querySelector('[data-field="shippingServiceDisplay"]').textContent = row.cjShippingService || row.quoteError || "Quote needed";
         node.querySelector('[data-field="salePriceDisplay"]').textContent = money(row.salePrice);
-        node.querySelector('[data-field="marginDisplay"]').textContent = pricing?.marginPercent == null ? "Margin ?" : `${pricing.marginPercent}%`;
+        node.querySelector('[data-field="marginDisplay"]').textContent = variantMarginText(prepared, pricing);
       });
       hiddenRows.value = JSON.stringify(rows);
     };
@@ -1137,6 +1148,7 @@ function renderEditor(draft) {
             || quotes.find((item) => /yunexpress ordinary|cjpacket ordinary|luwei ordinary/i.test(item.name))
             || quotes.slice().sort((a, b) => Number(a.price) - Number(b.price))[0];
           row.cost = result.cost;
+          row.costCurrency = result.currency || "USD";
           row.shippingCost = quote ? quote.price : null;
           row.cjShippingService = quote?.name || "";
           row.enabled = Boolean(quote);
