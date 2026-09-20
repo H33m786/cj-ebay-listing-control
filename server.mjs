@@ -9,7 +9,7 @@ import { createAccessGuard } from "./access.mjs";
 import { accountRequestUrl, ebayErrorMessage } from "./ebay-request.mjs";
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./public/pricing.js";
 import { normalizeQuotes } from "./cj-quotes.mjs";
-import { listingRows, prepareListing, variationErrors, inventoryPayload, inventoryGroup, aspectMap } from "./public/listing.js";
+import { listingRows, mainListingRowIndex, prepareListing, variationErrors, inventoryPayload, inventoryGroup, aspectMap } from "./public/listing.js";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -674,14 +674,15 @@ function validateDraft(draft) {
     ];
     const margins = rowChecks.map((check) => check.marginPercent).filter((value) => value != null);
     const warnings = [...new Set(rowChecks.flatMap((check) => check.warnings))];
+    const summary = rowChecks[mainListingRowIndex(draft, rows)] || {};
     if (!/^\d+$/.test(draft.ebayCategoryId || "")) failures.push("Choose an eBay category.");
     return {
       passed: failures.length === 0,
       failures: [...new Set(failures)],
       warnings,
-      landedCost: null,
-      estimatedFees: null,
-      margin: null,
+      landedCost: summary.landedCost ?? null,
+      estimatedFees: summary.estimatedFees ?? null,
+      margin: summary.margin ?? null,
       marginPercent: margins.length ? Math.min(...margins) : null
     };
   }

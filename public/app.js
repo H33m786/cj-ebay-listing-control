@@ -1,5 +1,5 @@
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./pricing.js";
-import { listingRows, variationErrors } from "./listing.js";
+import { listingRows, mainListingRowIndex, variationErrors } from "./listing.js";
 import { createOrdersView } from "./orders.js";
 const ordersView = createOrdersView(document.querySelector("#ordersView"));
 import { createRepricingView } from "./repricing.js";
@@ -1277,13 +1277,14 @@ function validateClient(draft) {
     failures.push(...checks.flatMap((check, index) => check.failures.map((failure) => `${rows[index]?.label || rows[index]?.sku || `Variation ${index + 1}`}: ${failure}`)));
     if (!/^\d+$/.test(draft.ebayCategoryId || "")) failures.push("Choose an eBay category.");
     const margins = checks.map((check) => check.marginPercent).filter((value) => value != null);
+    const summary = checks[mainListingRowIndex(draft, rows)] || {};
     return {
       passed: failures.length === 0,
       failures: [...new Set(failures)],
       warnings: [...new Set(checks.flatMap((check) => check.warnings))],
-      landedCost: null,
-      estimatedFees: null,
-      margin: null,
+      landedCost: summary.landedCost ?? null,
+      estimatedFees: summary.estimatedFees ?? null,
+      margin: summary.margin ?? null,
       marginPercent: margins.length ? Math.min(...margins) : null
     };
   }

@@ -18,6 +18,12 @@ export function listingRows(draft) {
   }));
 }
 
+export function mainListingRowIndex(draft, rows = listingRows(draft)) {
+  if (!rows.length) return -1;
+  const selected = rows.findIndex((row) => row.cjVariantId && row.cjVariantId === draft.cjVariantId);
+  return selected >= 0 ? selected : 0;
+}
+
 export function prepareListing(draft) {
   if (!draft.multiVariation) return applyTargetPrice(draft);
   const rows = listingRows(draft);

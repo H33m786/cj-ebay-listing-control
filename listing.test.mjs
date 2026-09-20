@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { inventoryGroup, listingRows, variationErrors } from "./public/listing.js";
+import { inventoryGroup, listingRows, mainListingRowIndex, variationErrors } from "./public/listing.js";
 import { draftPricing } from "./public/pricing.js";
 
 const draft = {
@@ -52,4 +52,10 @@ test("variant rows calculate sale prices independently from the target margin", 
   assert.equal(rows[1].salePrice, 41.97);
   assert.ok(draftPricing(rows[0]).marginPercent >= draft.targetMarginPercent);
   assert.ok(draftPricing(rows[1]).marginPercent >= draft.targetMarginPercent);
+});
+
+test("main listing summary uses the selected top-level variant", () => {
+  const rows = listingRows({ ...draft, multiVariation: true, cjVariantId: "v2" });
+  assert.equal(mainListingRowIndex({ ...draft, cjVariantId: "v2" }, rows), 1);
+  assert.equal(mainListingRowIndex({ ...draft, cjVariantId: "missing" }, rows), 0);
 });
