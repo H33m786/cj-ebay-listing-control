@@ -861,25 +861,38 @@ function variationsMarkup(draft) {
       <input type="hidden" name="variationAxes" value="Colour,Size" />
       <input type="hidden" name="listingVariantsJson" value="${escapeAttr(JSON.stringify(rows))}" />
       <div class="variation-toolbar">
-        <button type="button" class="secondary" id="selectCommonVariantsButton">Select common jacket sizes</button>
+        <button type="button" class="secondary" id="selectCommonVariantsButton">Select common sizes</button>
         <button type="button" class="secondary" id="quoteVariantsButton">Refresh selected variant quotes</button>
         <span id="variationStatus">${enabledCount ? `${enabledCount} selected` : "No variants selected"}</span>
       </div>
+      <p class="variation-help">Tick the variants you want to sell. Cost and shipping are the CJ amounts for that exact colour/size; the app uses them to calculate the eBay sale price and margin.</p>
       <div class="variation-table">
+        <div class="variation-row variation-row-head" aria-hidden="true">
+          <span>Use</span>
+          <span>CJ option</span>
+          <span>Colour</span>
+          <span>Size</span>
+          <span>Qty</span>
+          <span>Item cost</span>
+          <span>Shipping</span>
+          <span>Shipping service</span>
+          <span>eBay price</span>
+          <span>Margin</span>
+        </div>
         ${rows.map((row, index) => {
           const { pricing } = variantRowPricing(draft, row);
           return `
             <div class="variation-row" data-index="${index}">
               <label><input type="checkbox" data-field="enabled" ${row.enabled ? "checked" : ""} /> Use</label>
               <span>${escapeHtml(row.label)}</span>
-              <input data-field="colour" value="${escapeAttr(row.aspects?.Colour || "")}" aria-label="Colour" />
-              <input data-field="size" value="${escapeAttr(row.aspects?.Size || "")}" aria-label="Size" />
-              <input data-field="quantity" type="number" min="0" value="${escapeAttr(row.quantity ?? 1)}" aria-label="Quantity" />
-              <input data-field="cost" type="number" step="0.01" min="0" value="${row.cost ?? ""}" aria-label="Cost" />
-              <input data-field="shippingCost" type="number" step="0.01" min="0" value="${row.shippingCost ?? ""}" aria-label="Shipping cost" />
-              <span data-field="shippingServiceDisplay">${escapeHtml(row.cjShippingService || "Quote needed")}</span>
-              <span data-field="salePriceDisplay">${money(row.salePrice ?? variantRowPricing(draft, row).prepared?.salePrice)}</span>
-              <span data-field="marginDisplay">${escapeHtml(variantMarginText(variantRowPricing(draft, row).prepared, pricing))}</span>
+              <input data-field="colour" value="${escapeAttr(row.aspects?.Colour || "")}" aria-label="Colour" title="Colour buyers will choose on eBay" placeholder="Black" />
+              <input data-field="size" value="${escapeAttr(row.aspects?.Size || "")}" aria-label="Size" title="Size buyers will choose on eBay" placeholder="M" />
+              <input data-field="quantity" type="number" min="0" value="${escapeAttr(row.quantity ?? 1)}" aria-label="Quantity" title="How many units to make available for this variant" />
+              <input data-field="cost" type="number" step="0.01" min="0" value="${row.cost ?? ""}" aria-label="Item cost" title="CJ product cost for this exact variant, before shipping" placeholder="0.00" />
+              <input data-field="shippingCost" type="number" step="0.01" min="0" value="${row.shippingCost ?? ""}" aria-label="Shipping cost" title="CJ shipping cost for this exact variant" placeholder="0.00" />
+              <span data-field="shippingServiceDisplay" title="CJ shipping service selected by the quote tool">${escapeHtml(row.cjShippingService || "Quote needed")}</span>
+              <span data-field="salePriceDisplay" title="Calculated eBay price for this variant">${money(row.salePrice ?? variantRowPricing(draft, row).prepared?.salePrice)}</span>
+              <span data-field="marginDisplay" title="Profit margin after landed cost and estimated eBay fees">${escapeHtml(variantMarginText(variantRowPricing(draft, row).prepared, pricing))}</span>
             </div>
           `;
         }).join("")}

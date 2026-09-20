@@ -494,6 +494,12 @@ dd {
   font-weight: 800;
 }
 
+.variation-help {
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.45;
+}
+
 .variation-table {
   display: grid;
   gap: 6px;
@@ -526,6 +532,21 @@ dd {
 .variation-row span {
   overflow-wrap: anywhere;
   font-size: 0.84rem;
+}
+
+.variation-row-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #eef5f2;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.variation-row-head span {
+  font-size: 0.72rem;
 }
 
 .validation-box {
