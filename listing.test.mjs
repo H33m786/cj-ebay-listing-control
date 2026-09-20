@@ -87,3 +87,26 @@ test("category validation rejects unsupported variation axes before eBay publish
   });
   assert.ok(errors.includes("Size is not a supported variation attribute in this category."));
 });
+
+test("category validation accepts charger variation attributes when supported", () => {
+  const errors = categoryErrors({
+    ...draft,
+    multiVariation: true,
+    ebayCategoryId: "456",
+    variationAxes: ["Colour", "Compatible Brand"],
+    listingVariants: [
+      { enabled: true, cjVariantId: "v1", label: "Black-USB-C", quantity: 2, cost: 5, shippingCost: 2, aspects: { Colour: "Black", "Compatible Brand": "Universal" } },
+      { enabled: true, cjVariantId: "v2", label: "White-iPhone", quantity: 2, cost: 5, shippingCost: 2, aspects: { Colour: "White", "Compatible Brand": "Apple" } }
+    ]
+  }, {
+    categoryId: "456",
+    variationsSupported: true,
+    aspects: [
+      { localizedAspectName: "Colour", aspectConstraint: { aspectEnabledForVariations: true } },
+      { localizedAspectName: "Compatible Brand", aspectConstraint: { aspectEnabledForVariations: true } },
+      { localizedAspectName: "Brand", aspectConstraint: {} },
+      { localizedAspectName: "Type", aspectConstraint: {} }
+    ]
+  });
+  assert.deepEqual(errors, []);
+});

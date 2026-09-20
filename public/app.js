@@ -925,15 +925,36 @@ function validationMarkup(validation) {
 function splitVariantLabel(variant = {}) {
   const label = variant.variantKey || variant.variantNameEn || variant.variantSku || variant.vid || "";
   const parts = String(label).split("-").map((part) => part.trim()).filter(Boolean);
-  if (parts.length >= 2) return { colour: parts.slice(0, -1).join("-"), size: parts.at(-1), label };
-  return { colour: label || "Option", size: "", label };
+  if (parts.length >= 2) return { option1: parts.slice(0, -1).join("-"), option2: parts.at(-1), label };
+  return { option1: label || "Option", option2: "", label };
+}
+
+function supportedVariationAxes(draft) {
+  const schema = draft.ebayCategorySchema?.categoryId === draft.ebayCategoryId ? draft.ebayCategorySchema : null;
+  const axes = (schema?.aspects || []).filter((aspect) => aspect.aspectConstraint?.aspectEnabledForVariations).map((aspect) => aspect.localizedAspectName);
+  return axes.length ? axes : ["Colour", "Size", "Type", "Cable Length", "Compatible Brand"];
+}
+
+function normalizeVariationAxes(draft) {
+  const supported = supportedVariationAxes(draft);
+  const current = (draft.variationAxes || []).filter(Boolean);
+  const valid = current.filter((axis) => supported.includes(axis));
+  if (valid.length) return valid.slice(0, 2);
+  if (supported.includes("Colour")) return [supported.find((axis) => axis === "Colour"), supported.find((axis) => axis !== "Colour")].filter(Boolean).slice(0, 2);
+  return supported.slice(0, 2);
 }
 
 function defaultListingVariants(draft) {
+  const axes = normalizeVariationAxes(draft);
   const existing = new Map((draft.listingVariants || []).map((row) => [row.cjVariantId, row]));
   return (draft.variants || []).filter((variant) => variant?.vid).map((variant) => {
     const parts = splitVariantLabel(variant);
     const existingRow = existing.get(variant.vid) || {};
+    const existingAspects = existingRow.aspects || {};
+    const aspects = {};
+    axes.forEach((axis, index) => {
+      aspects[axis] = existingAspects[axis] || existingAspects[index === 0 ? "Colour" : "Size"] || parts[`option${index + 1}`] || "";
+    });
     return {
       enabled: existingRow.enabled === true,
       cjVariantId: variant.vid,
@@ -945,10 +966,7 @@ function defaultListingVariants(draft) {
       costCurrency: existingRow.costCurrency || null,
       image: existingRow.image || variant.variantImage || variant.variantImg || draft.image,
       cjShippingService: existingRow.cjShippingService || "",
-      aspects: {
-        Colour: existingRow.aspects?.Colour || parts.colour,
-        Size: existingRow.aspects?.Size || parts.size
-      }
+      aspects
     };
   });
 }
@@ -970,12 +988,19 @@ function variantMarginText(prepared, pricing) {
 
 function variationsMarkup(draft) {
   if (!Array.isArray(draft.variants) || !draft.variants.some((item) => item?.vid)) return "";
+  const axes = normalizeVariationAxes(draft);
+  const supportedAxes = supportedVariationAxes(draft);
   const rows = defaultListingVariants(draft);
   const enabledCount = rows.filter((row) => row.enabled).length;
+  const axisOptions = (selected) => supportedAxes.map((axis) => `<option value="${escapeAttr(axis)}" ${axis === selected ? "selected" : ""}>${escapeHtml(axis)}</option>`).join("");
   return `
     <section class="wide variation-builder" id="variationBuilder">
-      <label class="pricing-confirmation"><input name="multiVariation" type="checkbox" ${draft.multiVariation ? "checked" : ""} /> Publish as one eBay listing with colour/size variants</label>
-      <input type="hidden" name="variationAxes" value="Colour,Size" />
+      <label class="pricing-confirmation"><input name="multiVariation" type="checkbox" ${draft.multiVariation ? "checked" : ""} /> Publish as one eBay listing with selectable variants</label>
+      <div class="variation-axis-picker">
+        <label>Variation attribute 1 <select data-axis-index="0">${axisOptions(axes[0])}</select></label>
+        <label>Variation attribute 2 <select data-axis-index="1"><option value="">None</option>${axisOptions(axes[1])}</select></label>
+      </div>
+      <input type="hidden" name="variationAxes" value="${escapeAttr(axes.join(","))}" />
       <input type="hidden" name="listingVariantsJson" value="${escapeAttr(JSON.stringify(rows))}" />
       <div class="variation-toolbar">
         <button type="button" class="secondary" id="selectCommonVariantsButton">Select common sizes</button>
@@ -987,8 +1012,7 @@ function variationsMarkup(draft) {
         <div class="variation-row variation-row-head" aria-hidden="true">
           <span>Use</span>
           <span>CJ option</span>
-          <span>Colour</span>
-          <span>Size</span>
+          ${axes.map((axis) => `<span>${escapeHtml(axis)}</span>`).join("")}
           <span>Qty</span>
           <span>Item cost</span>
           <span>Shipping</span>
@@ -1002,8 +1026,7 @@ function variationsMarkup(draft) {
             <div class="variation-row" data-index="${index}">
               <label><input type="checkbox" data-field="enabled" ${row.enabled ? "checked" : ""} /> Use</label>
               <span>${escapeHtml(row.label)}</span>
-              <input data-field="colour" value="${escapeAttr(row.aspects?.Colour || "")}" aria-label="Colour" title="Colour buyers will choose on eBay" placeholder="Black" />
-              <input data-field="size" value="${escapeAttr(row.aspects?.Size || "")}" aria-label="Size" title="Size buyers will choose on eBay" placeholder="M" />
+              ${axes.map((axis, axisIndex) => `<input data-field="aspect" data-axis="${escapeAttr(axis)}" value="${escapeAttr(row.aspects?.[axis] || "")}" aria-label="${escapeAttr(axis)}" title="${escapeAttr(axis)} buyers will choose on eBay" placeholder="${axisIndex === 0 ? "Black" : "Option"}" />`).join("")}
               <input data-field="quantity" type="number" min="0" value="${escapeAttr(row.quantity ?? 1)}" aria-label="Quantity" title="How many units to make available for this variant" />
               <input data-field="cost" type="number" step="0.01" min="0" value="${row.cost ?? ""}" aria-label="Item cost" title="CJ product cost for this exact variant, before shipping" placeholder="0.00" />
               <input data-field="shippingCost" type="number" step="0.01" min="0" value="${row.shippingCost ?? ""}" aria-label="Shipping cost" title="CJ shipping cost for this exact variant" placeholder="0.00" />
@@ -1194,6 +1217,7 @@ function renderEditor(draft) {
     const hiddenRows = editor.elements.listingVariantsJson;
     const status = editor.querySelector("#variationStatus");
     const rowElements = () => [...variationBuilder.querySelectorAll(".variation-row[data-index]")];
+    const selectedAxes = () => [...variationBuilder.querySelectorAll("[data-axis-index]")].map((input) => input.value.trim()).filter(Boolean);
     const setInputValue = (node, field, value) => {
       const input = node.querySelector(`[data-field="${field}"]`);
       if (!input || document.activeElement === input) return;
@@ -1216,10 +1240,7 @@ function renderEditor(draft) {
           shippingCost: node.querySelector('[data-field="shippingCost"]').value === "" ? null : Number(node.querySelector('[data-field="shippingCost"]').value),
           image: old.image || base.image,
           cjShippingService: old.cjShippingService || "",
-          aspects: {
-            Colour: node.querySelector('[data-field="colour"]').value.trim(),
-            Size: node.querySelector('[data-field="size"]').value.trim()
-          }
+          aspects: Object.fromEntries([...node.querySelectorAll('[data-field="aspect"]')].map((input) => [input.dataset.axis, input.value.trim()]))
         };
       }).filter(Boolean);
     };
@@ -1231,8 +1252,9 @@ function renderEditor(draft) {
         if (!row) return;
         const enabled = node.querySelector('[data-field="enabled"]');
         if (enabled) enabled.checked = row.enabled === true;
-        setInputValue(node, "colour", row.aspects?.Colour || "");
-        setInputValue(node, "size", row.aspects?.Size || "");
+        node.querySelectorAll('[data-field="aspect"]').forEach((input) => {
+          if (document.activeElement !== input) input.value = row.aspects?.[input.dataset.axis] || "";
+        });
         setInputValue(node, "quantity", row.quantity ?? 1);
         setInputValue(node, "cost", row.cost ?? "");
         setInputValue(node, "shippingCost", row.shippingCost ?? "");
@@ -1256,9 +1278,19 @@ function renderEditor(draft) {
     };
     variationBuilder.addEventListener("input", () => writeRows(readRows()));
     variationBuilder.addEventListener("change", () => writeRows(readRows()));
+    variationBuilder.querySelectorAll("[data-axis-index]").forEach((select) => {
+      select.addEventListener("change", () => {
+        editor.elements.variationAxes.value = selectedAxes().join(",");
+        saveDraftFromForm(draft.id).catch((error) => alert(error.message));
+      });
+    });
     editor.querySelector("#selectCommonVariantsButton").addEventListener("click", () => {
       editor.elements.multiVariation.checked = true;
-      const rows = readRows().map((row) => ({ ...row, enabled: /^(Black|Gray|Grey|Khaki|Army Green|Dark Blue)/i.test(row.aspects.Colour || "") && /^(M|L|XL|2XL|3XL)$/i.test(row.aspects.Size || "") }));
+      const axes = selectedAxes();
+      const rows = readRows().map((row) => {
+        const values = axes.map((axis) => row.aspects?.[axis] || "").join(" ");
+        return { ...row, enabled: /black|gray|grey|khaki|green|blue|white|usb|type|lightning|micro|1m|2m|3m|m|l|xl/i.test(values) };
+      });
       writeRows(rows);
     });
     editor.querySelector("#quoteVariantsButton").addEventListener("click", async () => {
@@ -1308,8 +1340,10 @@ function renderEditor(draft) {
     try {
       const schema = await api(`/api/ebay/category-aspects?categoryId=${encodeURIComponent(category.id)}`);
       editor.elements.ebayCategorySchemaJson.value = JSON.stringify(schema);
-      const current = { ...draft, ...draftFormValues(editor) };
-      editor.querySelector(".item-specifics").outerHTML = itemSpecificsMarkup(current);
+      const current = { ...draft, ...draftFormValues(editor), ebayCategorySchema: schema };
+      editor.elements.variationAxes.value = normalizeVariationAxes(current).join(",");
+      await saveDraftFromForm(draft.id);
+      return;
     } catch (error) {
       editor.elements.ebayCategorySchemaJson.value = "";
       categoryResults.innerHTML = `<p class="inline-status">${escapeHtml(error.message)}</p>`;
