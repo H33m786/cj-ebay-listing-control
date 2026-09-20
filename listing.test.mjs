@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { categoryErrors, inventoryGroup, listingRows, mainListingRowIndex, variationErrors } from "./public/listing.js";
+import { categoryErrors, ebaySku, inventoryGroup, listingRows, mainListingRowIndex, variationErrors } from "./public/listing.js";
 import { draftPricing } from "./public/pricing.js";
 
 const draft = {
@@ -25,12 +25,17 @@ const draft = {
 test("inventory group declares variant SKUs and colour/size variation axes", () => {
   const rows = listingRows({ ...draft, multiVariation: true });
   const group = inventoryGroup(draft, rows);
-  assert.deepEqual(group.variantSKUs, ["CJ-JACKET-v1", "CJ-JACKET-v2"]);
+  assert.deepEqual(group.variantSKUs, ["CJJACKETV1", "CJJACKETV2"]);
   assert.deepEqual(group.variesBy.aspectsImageVariesBy, ["Colour"]);
   assert.deepEqual(group.variesBy.specifications, [
     { name: "Colour", values: ["Grey", "Black"] },
     { name: "Size", values: ["M", "L"] }
   ]);
+});
+
+test("variation SKUs are eBay-safe alphanumeric values", () => {
+  assert.equal(ebaySku("CJ-CHARGER", "Silver iPhone-1m"), "CJCHARGERSILVERIPHONE1M");
+  assert.equal(ebaySku("A".repeat(40), "Silver iPhone-1m").length, 50);
 });
 
 test("variation validation rejects duplicate attribute combinations", () => {

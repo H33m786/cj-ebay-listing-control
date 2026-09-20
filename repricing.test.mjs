@@ -105,9 +105,9 @@ test("variation prices are calculated independently and partial failures remain 
   await repriceListing(listing, rule, settings, {
     quote: async (variant) => { if (variant.cjVariantId === "blue") throw new Error("No quote"); return { ...quote, variantId: "red" }; },
     request: async (path, options) => {
-      if (options?.method === "POST") { posts++; return { responses: [{ sku: "SKU-red", offerId: "offer", statusCode: 200 }] }; }
+      if (options?.method === "POST") { posts++; return { responses: [{ sku: "SKURED", offerId: "offer", statusCode: 200 }] }; }
       if (path.includes("fulfillment_policy")) return freePolicy;
-      return { offers: [{ ...offer, sku: "SKU-red", pricingSummary: { price: { currency: "GBP", value: posts ? "27.02" : "28" } } }] };
+      return { offers: [{ ...offer, sku: "SKURED", pricingSummary: { price: { currency: "GBP", value: posts ? "27.02" : "28" } } }] };
     }, record: async (event) => events.push({ ...event })
   });
   assert.equal(listing.listingVariants[0].salePrice, 27.02);

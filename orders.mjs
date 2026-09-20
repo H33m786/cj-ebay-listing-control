@@ -1,3 +1,5 @@
+import { ebaySku } from "./public/listing.js";
+
 export function orderQuery(params, now = new Date()) {
   const days = Number(params.get("days") || 30);
   const offset = Number(params.get("offset") || 0);
@@ -10,7 +12,7 @@ function cjMatch(item, published, environment) {
   const matches = [];
   for (const listing of published.filter((entry) => entry.publishedMode === environment)) {
     if (String(listing.ebayListingId) !== String(item.legacyItemId)) continue;
-    const rows = listing.multiVariation ? (listing.listingVariants || []).filter((row) => row.enabled).map((row) => ({ ...listing, ...row, sku: `${listing.sku}-${row.cjVariantId}` })) : [listing];
+    const rows = listing.multiVariation ? (listing.listingVariants || []).filter((row) => row.enabled).map((row) => ({ ...listing, ...row, sku: ebaySku(listing.sku, row.cjVariantId || row.label) })) : [listing];
     for (const row of rows) {
       if (item.sku && row.sku === item.sku && row.cjProductId && row.cjVariantId) matches.push(row);
     }

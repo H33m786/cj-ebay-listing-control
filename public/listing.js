@@ -4,6 +4,12 @@ export function aspectMap(input = {}) {
   return Object.fromEntries(Object.entries(input).filter(([name]) => name !== "Condition").map(([name, values]) => [name, (Array.isArray(values) ? values : [values]).map(String).map((v) => v.trim()).filter(Boolean)]).filter(([, values]) => values.length));
 }
 
+export function ebaySku(...parts) {
+  const fallback = "SKU";
+  const value = parts.join("").replace(/[^a-z0-9]/gi, "").toUpperCase() || fallback;
+  return value.slice(0, 50);
+}
+
 export function listingRows(draft) {
   if (!draft.multiVariation) return [draft];
   return (draft.listingVariants || []).filter((row) => row.enabled).map((row) => applyTargetPrice({
@@ -11,7 +17,7 @@ export function listingRows(draft) {
     costCurrency: row.costCurrency || draft.costCurrency || "USD", autoPrice: draft.autoPrice, targetMarginPercent: draft.targetMarginPercent,
     feePercent: draft.feePercent, feeFixed: draft.feeFixed, usdToGbp: draft.usdToGbp,
     otherCostsGbp: draft.otherCostsGbp,
-    sku: `${draft.sku}-${row.cjVariantId}`,
+    sku: ebaySku(draft.sku, row.cjVariantId || row.label),
     itemSpecifics: { ...aspectMap(draft.itemSpecifics), ...aspectMap(row.aspects) },
     supplierImages: [...new Set([row.image, ...(draft.supplierImages || [])].filter(Boolean))],
     pricingReviewed: draft.pricingReviewed

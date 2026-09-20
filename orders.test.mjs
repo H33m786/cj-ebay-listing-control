@@ -26,7 +26,7 @@ test("CJ matching rejects ambiguous, unknown, wrong listing and cross-environmen
 });
 test("multi-variation match uses exact sold SKU", () => {
   const grouped = { ...listing, multiVariation: true, listingVariants: [{ enabled: true, cjVariantId: "blue", label: "Blue M" }] };
-  const sold = { ...order, lineItems: [{ ...order.lineItems[0], sku: "SKU-blue" }] };
+  const sold = { ...order, lineItems: [{ ...order.lineItems[0], sku: "SKUBLUE" }] };
   assert.equal(normalizeOrder(sold, [grouped]).items[0].cj.variantId, "blue");
 });
 test("unpaid, cancelled, fulfilled and missing delivery are warned", () => {
