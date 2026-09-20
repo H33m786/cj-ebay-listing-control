@@ -9,7 +9,7 @@ import { createAccessGuard } from "./access.mjs";
 import { accountRequestUrl, ebayErrorMessage } from "./ebay-request.mjs";
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./public/pricing.js";
 import { normalizeQuotes } from "./cj-quotes.mjs";
-import { listingRows, mainListingRowIndex, prepareListing, variationErrors, inventoryPayload, inventoryGroup, aspectMap, categoryErrors } from "./public/listing.js";
+import { listingRows, mainListingRowIndex, prepareListing, variationErrors, inventoryPayload, inventoryGroup, aspectMap, categoryErrors, alignVariationAxesToSchema } from "./public/listing.js";
 import { buildDraftDescription, buildEbayListingDescription } from "./public/description.js";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
@@ -796,6 +796,15 @@ async function ebayCategoryFailures(draft, token) {
   }
 }
 
+async function alignDraftForEbayCategory(draft, token) {
+  if (!draft.multiVariation || !draft.ebayCategoryId) return draft;
+  try {
+    return alignVariationAxesToSchema(draft, await ebayCategorySchema(draft.ebayCategoryId, token));
+  } catch {
+    return draft;
+  }
+}
+
 async function fetchCjProducts(url) {
   const keyword = url.searchParams.get("keyword")?.trim().toLowerCase() || "";
   const category = url.searchParams.get("category") || "";
@@ -1073,6 +1082,7 @@ async function publishDraft(draft) {
       return { ok: false, error: `Live eBay publishing is missing: ${missing.join(", ")}` };
     }
     const token = await getUsableEbayToken();
+    draft = await alignDraftForEbayCategory(draft, token);
     const categoryFailures = await ebayCategoryFailures(draft, token);
     if (categoryFailures.length) {
       return {
@@ -1090,6 +1100,7 @@ async function publishDraft(draft) {
   return {
     ok: true,
     listingId: `SIM-${Math.floor(1000000000 + Math.random() * 8999999999)}`,
+    draft,
     mode: "simulated"
   };
 }
@@ -1132,6 +1143,7 @@ async function publishDraftToEbay(draft, token = null) {
       groupKey,
       publishVerified: verification.allPublished,
       publishDetails: verification.details,
+      draft,
       mode: ebayEnvironment()
     };
   }
@@ -1156,6 +1168,7 @@ async function publishDraftToEbay(draft, token = null) {
     offerId,
     publishVerified: verification.allPublished,
     publishDetails: verification.details,
+    draft,
     mode: ebayEnvironment()
   };
 }
@@ -2004,8 +2017,9 @@ async function handleApi(req, res, url) {
           sendJson(res, 422, result);
           return;
         }
+        const sourceDraft = result.draft || store.drafts[index];
         const published = {
-          ...store.drafts[index],
+          ...sourceDraft,
           status: "published",
           ebayListingId: result.listingId,
           ebayOfferId: result.offerId || null,

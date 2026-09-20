@@ -1,5 +1,5 @@
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./pricing.js";
-import { listingRows, mainListingRowIndex, variationErrors, categoryErrors } from "./listing.js";
+import { listingRows, mainListingRowIndex, variationErrors, categoryErrors, alignVariationAxesToSchema } from "./listing.js";
 import { buildDraftDescription } from "./description.js";
 import { createOrdersView } from "./orders.js";
 const ordersView = createOrdersView(document.querySelector("#ordersView"));
@@ -1517,6 +1517,7 @@ function collectImageUrls(urls, value) {
 }
 
 function validateClient(draft) {
+  if (draft.ebayCategorySchema?.categoryId === draft.ebayCategoryId) draft = alignVariationAxesToSchema(draft, draft.ebayCategorySchema);
   if (draft.multiVariation) {
     const rows = listingRows(draft);
     const failures = [...variationErrors(draft)];

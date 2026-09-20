@@ -31,6 +31,34 @@ export function prepareListing(draft) {
     quantity: rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0) };
 }
 
+export function alignVariationAxesToSchema(draft, schema) {
+  if (!draft.multiVariation || !schema || schema.categoryId !== draft.ebayCategoryId) return draft;
+  const supported = (schema.aspects || []).filter((aspect) => aspect.aspectConstraint?.aspectEnabledForVariations).map((aspect) => aspect.localizedAspectName);
+  if (!supported.length) return draft;
+  const current = (draft.variationAxes || []).filter(Boolean);
+  const nextAxes = [];
+  const axisMap = new Map();
+  for (const axis of current) {
+    const replacement = supported.includes(axis) ? axis : supported.find((candidate) => !nextAxes.includes(candidate));
+    if (!replacement) continue;
+    nextAxes.push(replacement);
+    axisMap.set(axis, replacement);
+  }
+  if (!nextAxes.length) nextAxes.push(...supported.slice(0, Math.min(2, supported.length)));
+  return {
+    ...draft,
+    variationAxes: [...new Set(nextAxes)].slice(0, 5),
+    listingVariants: (draft.listingVariants || []).map((row) => {
+      const aspects = {};
+      for (const [name, value] of Object.entries(row.aspects || {})) {
+        const replacement = axisMap.get(name) || (supported.includes(name) ? name : null);
+        if (replacement && value) aspects[replacement] = value;
+      }
+      return { ...row, aspects };
+    })
+  };
+}
+
 export function variationErrors(draft) {
   if (!draft.multiVariation) return [];
   const rows = (draft.listingVariants || []).filter((row) => row.enabled);
@@ -72,10 +100,17 @@ export function inventoryGroup(draft, rows) {
 export function categoryErrors(draft, schema) {
   const errors = [];
   if (!draft.ebayCategoryId || !schema || schema.categoryId !== draft.ebayCategoryId) return ["Select and load an eBay category."];
-  if (draft.multiVariation && !schema.variationsSupported) errors.push("This eBay category does not support variations.");
-  for (const axis of draft.multiVariation ? draft.variationAxes || [] : []) {
-    if (!schema.aspects.some((aspect) => aspect.localizedAspectName === axis && aspect.aspectConstraint?.aspectEnabledForVariations)) errors.push(`${axis} is not a supported variation attribute in this category.`);
+  const supportedAxes = (schema.aspects || []).filter((aspect) => aspect.aspectConstraint?.aspectEnabledForVariations).map((aspect) => aspect.localizedAspectName);
+  const axes = (draft.multiVariation ? draft.variationAxes || [] : []).filter(Boolean);
+  let available = supportedAxes.filter((axis) => !axes.includes(axis));
+  for (const axis of axes) {
+    if (!supportedAxes.includes(axis)) {
+      const replacement = available.shift();
+      if (!replacement) errors.push(`${axis} is not a supported variation attribute in this category.`);
+    }
   }
+  draft = alignVariationAxesToSchema(draft, schema);
+  if (draft.multiVariation && !schema.variationsSupported) errors.push("This eBay category does not support variations.");
   for (const row of listingRows(draft)) {
     const values = aspectMap(row.itemSpecifics);
     for (const aspect of schema.aspects) {
