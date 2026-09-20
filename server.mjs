@@ -616,9 +616,6 @@ function makeDraftFromProduct(product) {
     itemSpecifics: {
       Brand: "Unbranded",
       Type: product.category,
-      Department: "Men",
-      Style: product.category || "Jacket",
-      "Outer Shell Material": "Polyester",
       Condition: "New"
     },
     ebayCategoryId: "",
@@ -798,7 +795,6 @@ async function ebayCategorySchema(categoryId, token) {
 }
 
 async function ebayCategoryFailures(draft, token) {
-  if (!draft.multiVariation) return [];
   if (!draft.ebayCategoryId) return ["Choose an eBay category."];
   try {
     return categoryErrors(draft, await ebayCategorySchema(draft.ebayCategoryId, token));
@@ -1138,6 +1134,33 @@ async function verifyPublishedOffers(skus, token) {
     listingIds: [...new Set(listingIds)],
     details
   };
+}
+
+async function withdrawPublishedFromEbay(listing, token = null) {
+  if (listing.status === "withdrawn") return { alreadyWithdrawn: true };
+  if (listing.publishedMode === "simulated") return { simulated: true };
+  if (listing.publishedMode !== ebayEnvironment()) {
+    throw new Error(`This listing was published in ${listing.publishedMode || "another mode"}. Switch the app to that eBay environment before withdrawing it.`);
+  }
+  token ||= await getUsableEbayToken();
+  if (listing.ebayGroupKey) {
+    return ebayStage("withdrawing eBay variation group", () => ebayApi("/sell/inventory/v1/offer/withdraw_by_inventory_item_group", token, {
+      method: "POST",
+      body: {
+        inventoryItemGroupKey: listing.ebayGroupKey,
+        marketplaceId: process.env.EBAY_MARKETPLACE_ID || "EBAY_GB"
+      }
+    }));
+  }
+  const offerIds = [...new Set([listing.ebayOfferId, ...(listing.ebayOfferIds || [])].filter(Boolean))];
+  if (!offerIds.length) throw new Error("This listing does not have an eBay offer ID saved, so it cannot be withdrawn automatically.");
+  const results = [];
+  for (const offerId of offerIds) {
+    results.push(await ebayStage(`withdrawing eBay offer ${offerId}`, () => ebayApi(`/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/withdraw`, token, {
+      method: "POST"
+    })));
+  }
+  return { offers: results };
 }
 
 function ebayEnvironment() {
@@ -1764,6 +1787,18 @@ async function handleApi(req, res, url) {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/ebay/category-aspects") {
+      try {
+        const categoryId = url.searchParams.get("categoryId") || "";
+        if (!/^\d+$/.test(categoryId)) throw new Error("Choose an eBay category first.");
+        const token = await getUsableEbayToken();
+        sendJson(res, 200, await ebayCategorySchema(categoryId, token));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/cj/connect") {
       try {
         const body = await readBody(req);
@@ -1791,6 +1826,32 @@ async function handleApi(req, res, url) {
     if (req.method === "GET" && url.pathname === "/api/drafts") {
       const store = await readStore();
       sendJson(res, 200, { drafts: store.drafts, published: store.published });
+      return;
+    }
+
+    const publishedMatch = url.pathname.match(/^\/api\/published\/([^/]+)\/withdraw$/);
+    if (req.method === "POST" && publishedMatch) {
+      const store = await readStore();
+      const id = decodeURIComponent(publishedMatch[1]);
+      const index = store.published.findIndex((listing) => listing.id === id);
+      if (index === -1) {
+        sendJson(res, 404, { error: "Published listing not found" });
+        return;
+      }
+      try {
+        const result = await withdrawPublishedFromEbay(store.published[index]);
+        store.published[index] = {
+          ...store.published[index],
+          status: "withdrawn",
+          withdrawnAt: new Date().toISOString(),
+          withdrawMode: ebayEnvironment(),
+          ebayWithdrawDetails: result
+        };
+        await saveStore(store);
+        sendJson(res, 200, { published: store.published[index] });
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
       return;
     }
 

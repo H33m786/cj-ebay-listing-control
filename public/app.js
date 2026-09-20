@@ -1,5 +1,5 @@
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./pricing.js";
-import { listingRows, mainListingRowIndex, variationErrors } from "./listing.js";
+import { listingRows, mainListingRowIndex, variationErrors, categoryErrors } from "./listing.js";
 import { createOrdersView } from "./orders.js";
 const ordersView = createOrdersView(document.querySelector("#ordersView"));
 import { createRepricingView } from "./repricing.js";
@@ -10,6 +10,9 @@ const state = {
   drafts: [],
   published: [],
   selectedDraftId: null,
+  selectedPublishedId: null,
+  publishedSales: null,
+  publishedSalesError: "",
   settings: null,
   ebayAccountSetup: null
 };
@@ -544,9 +547,6 @@ function makeHostedDraft(product) {
     itemSpecifics: {
       Brand: "Unbranded",
       Type: product.category,
-      Department: "Men",
-      Style: product.category || "Jacket",
-      "Outer Shell Material": "Polyester",
       Condition: "New"
     },
     warehouse: product.warehouse,
@@ -718,6 +718,7 @@ function setView(name) {
   $(`#${name}View`).classList.add("active");
   $("#viewEyebrow").textContent = viewCopy[name][0];
   $("#viewTitle").textContent = viewCopy[name][1];
+  if (name === "published") loadPublishedSales();
 }
 
 function renderCounts() {
@@ -878,17 +879,44 @@ function variationsMarkup(draft) {
 }
 
 function itemSpecificsMarkup(draft) {
-  const specifics = { Brand: "Unbranded", Type: draft.category || "Jacket", Department: "Men", Style: "Jacket", "Outer Shell Material": "Polyester", ...(draft.itemSpecifics || {}) };
+  const specifics = { Brand: "Unbranded", Type: draft.category || "", ...(draft.itemSpecifics || {}) };
+  const schema = draft.ebayCategorySchema?.categoryId === draft.ebayCategoryId ? draft.ebayCategorySchema : null;
+  const aspectNames = new Set(["Brand", "Type"]);
+  for (const aspect of schema?.aspects || []) {
+    const rule = aspect.aspectConstraint || {};
+    if (rule.aspectRequired || rule.aspectUsage === "RECOMMENDED") aspectNames.add(aspect.localizedAspectName);
+  }
+  for (const name of Object.keys(specifics)) {
+    if (!schema?.aspects?.some((item) => item.localizedAspectName === name) && isLegacyClothingSpecific(name, specifics[name], draft)) continue;
+    if (name !== "Condition") aspectNames.add(name);
+  }
+  const fields = [...aspectNames].filter((name) => name && !["Condition", ...(draft.multiVariation ? draft.variationAxes || [] : [])].includes(name));
+  const fieldMarkup = fields.map((name) => {
+    const aspect = schema?.aspects?.find((item) => item.localizedAspectName === name);
+    const rule = aspect?.aspectConstraint || {};
+    const values = (aspect?.aspectValues || []).map((item) => item.localizedValue).filter(Boolean);
+    const required = rule.aspectRequired ? " required" : "";
+    const label = `${escapeHtml(name)}${rule.aspectRequired ? " *" : ""}`;
+    if (values.length && values.length <= 80 && rule.aspectMode === "SELECTION_ONLY") {
+      return `<label>${label}<select name="specific.${escapeAttr(name)}"${required}><option value="">Select</option>${values.map((value) => `<option value="${escapeAttr(value)}" ${String(specifics[name] || "") === value ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>`;
+    }
+    return `<label>${label}<input name="specific.${escapeAttr(name)}" value="${escapeAttr(specifics[name] || "")}"${required} /></label>`;
+  }).join("");
   return `
     <fieldset class="wide item-specifics">
       <legend>eBay item specifics</legend>
-      <label>Brand <input name="specific.Brand" value="${escapeAttr(specifics.Brand || "")}" /></label>
-      <label>Type <input name="specific.Type" value="${escapeAttr(specifics.Type || "")}" /></label>
-      <label>Department <input name="specific.Department" value="${escapeAttr(specifics.Department || "")}" /></label>
-      <label>Style <input name="specific.Style" value="${escapeAttr(specifics.Style || "")}" /></label>
-      <label>Outer Shell Material <input name="specific.Outer Shell Material" value="${escapeAttr(specifics["Outer Shell Material"] || "")}" /></label>
+      ${schema ? `<p class="specifics-note">Showing required and recommended specifics for the selected eBay category.</p>` : `<p class="specifics-note">Select an eBay category to load category-specific required fields.</p>`}
+      ${fieldMarkup}
     </fieldset>
   `;
+}
+
+function isLegacyClothingSpecific(name, value, draft) {
+  const text = String(value || "").trim().toLowerCase();
+  if (name === "Department" && text === "men") return true;
+  if (name === "Outer Shell Material" && text === "polyester") return true;
+  if (name === "Style" && (text === "jacket" || text === String(draft.category || "").trim().toLowerCase())) return true;
+  return false;
 }
 
 function renderEditor(draft) {
@@ -909,6 +937,7 @@ function renderEditor(draft) {
       <div class="wide category-picker">
         <input type="hidden" name="ebayCategoryId" value="${escapeAttr(draft.ebayCategoryId || "")}" />
         <input type="hidden" name="ebayCategoryName" value="${escapeAttr(draft.ebayCategoryName || "")}" />
+        <input type="hidden" name="ebayCategorySchemaJson" value="${escapeAttr(JSON.stringify(draft.ebayCategorySchema || null))}" />
         <button type="button" class="secondary" id="findEbayCategoryButton">Find eBay categories</button>
         <span id="selectedEbayCategory">${escapeHtml(categoryLabel)}</span>
         <div id="ebayCategoryResults" class="category-results"></div>
@@ -1128,11 +1157,20 @@ function renderEditor(draft) {
   const categoryResults = editor.querySelector("#ebayCategoryResults");
   const selectedCategory = editor.querySelector("#selectedEbayCategory");
   const findCategoryButton = editor.querySelector("#findEbayCategoryButton");
-  const selectEbayCategory = (category) => {
+  const selectEbayCategory = async (category) => {
     editor.elements.ebayCategoryId.value = category.id;
     editor.elements.ebayCategoryName.value = category.name;
     selectedCategory.textContent = category.name;
     categoryResults.innerHTML = "";
+    try {
+      const schema = await api(`/api/ebay/category-aspects?categoryId=${encodeURIComponent(category.id)}`);
+      editor.elements.ebayCategorySchemaJson.value = JSON.stringify(schema);
+      const current = { ...draft, ...draftFormValues(editor) };
+      editor.querySelector(".item-specifics").outerHTML = itemSpecificsMarkup(current);
+    } catch (error) {
+      editor.elements.ebayCategorySchemaJson.value = "";
+      categoryResults.innerHTML = `<p class="inline-status">${escapeHtml(error.message)}</p>`;
+    }
     refreshPricing();
   };
   findCategoryButton.addEventListener("click", async () => {
@@ -1233,6 +1271,12 @@ function draftFormValues(form) {
     body.listingVariants = [];
   }
   delete body.listingVariantsJson;
+  try {
+    body.ebayCategorySchema = body.ebayCategorySchemaJson ? JSON.parse(body.ebayCategorySchemaJson) : null;
+  } catch {
+    body.ebayCategorySchema = null;
+  }
+  delete body.ebayCategorySchemaJson;
   body.itemSpecifics = {};
   for (const [key, value] of formData.entries()) {
     if (key.startsWith("specific.")) {
@@ -1299,6 +1343,7 @@ function validateClient(draft) {
   if (draft.multiVariation) {
     const rows = listingRows(draft);
     const failures = [...variationErrors(draft)];
+    if (draft.ebayCategorySchema?.categoryId === draft.ebayCategoryId) failures.push(...categoryErrors(draft, draft.ebayCategorySchema));
     const checks = rows.map((row) => validateClient(row));
     failures.push(...checks.flatMap((check, index) => check.failures.map((failure) => `${rows[index]?.label || rows[index]?.sku || `Variation ${index + 1}`}: ${failure}`)));
     if (!/^\d+$/.test(draft.ebayCategoryId || "")) failures.push("Choose an eBay category.");
@@ -1328,6 +1373,7 @@ function validateClient(draft) {
   if (!draft.description || draft.description.length < 40) failures.push("Description is too thin.");
   if (!draft.category) failures.push("Category is required.");
   if (!/^\d+$/.test(draft.ebayCategoryId || "")) failures.push("Choose an eBay category.");
+  if (draft.ebayCategorySchema?.categoryId === draft.ebayCategoryId) failures.push(...categoryErrors(draft, draft.ebayCategorySchema));
   if (draft.source === "cj" && !String(draft.cjProductId || "").startsWith("CJ-") && !draft.cjVariantId) failures.push("Select a CJ variant.");
   if (draft.quantity < 1) failures.push("Quantity must be at least 1.");
   if (draft.quantity > draft.stock) failures.push("Quantity is higher than CJ stock.");
@@ -1335,40 +1381,248 @@ function validateClient(draft) {
   if (!imageUrlList(draft.supplierImages, draft.supplierImage, draft.image).length) failures.push("A real supplier image URL is required for eBay publishing.");
   if (marginPercent < 15) warnings.push("Margin is below the 15% target.");
   if (draft.deliveryDays > 10) warnings.push("Delivery estimate is slow for eBay buyers.");
-  return { passed: failures.length === 0, failures, warnings, landedCost: landed, estimatedFees: fees, margin, marginPercent };
+  return { passed: failures.length === 0, failures: [...new Set(failures)], warnings, landedCost: landed, estimatedFees: fees, margin, marginPercent };
 }
 
 function renderPublished() {
   const list = $("#publishedList");
+  const detail = $("#publishedDetail");
   if (!state.published.length) {
     list.innerHTML = '<div class="empty-state">Published listings will appear here after drafts pass checks.</div>';
+    detail.innerHTML = '<div class="empty-state">Select a published listing to inspect pricing, sales, and eBay status.</div>';
     return;
   }
-  list.innerHTML = state.published
-    .map(
-      (item) => {
-        const listingId = String(item.ebayListingId || "");
-        const listingUrl = /^\d+$/.test(listingId)
-          ? `${item.publishedMode === "sandbox" ? "https://sandbox.ebay.com/itm/" : "https://www.ebay.co.uk/itm/"}${encodeURIComponent(listingId)}`
-          : "";
-        return `
-      <article class="published-item">
+
+  if (!state.published.some((item) => item.id === state.selectedPublishedId)) {
+    state.selectedPublishedId = state.published[0].id;
+  }
+
+  list.innerHTML = state.published.map((item) => {
+    const row = mainPublishedRow(item);
+    const pricing = draftPricing(row);
+    const listingId = String(item.ebayListingId || "");
+    const listingUrl = ebayListingUrl(item);
+    return `
+      <button type="button" class="published-item ${item.id === state.selectedPublishedId ? "active" : ""}" data-published-id="${escapeAttr(item.id)}">
         ${productVisual(item)}
-        <div>
-          <h3>${escapeHtml(item.title)}</h3>
-          <p class="meta">${item.sku} / ${money(item.salePrice)} / ${item.quantity} units</p>
-          <p class="meta">eBay listing: ${escapeHtml(listingId || "Not returned")}${listingUrl ? ` / <a href="${escapeAttr(listingUrl)}" target="_blank" rel="noreferrer">Open on eBay</a>` : " / No public item link returned yet"}</p>
-          ${item.ebayOfferId ? `<p class="meta">eBay offer: ${escapeHtml(item.ebayOfferId)}</p>` : ""}
-          ${item.ebayOfferIds?.length ? `<p class="meta">eBay offers: ${item.ebayOfferIds.map(escapeHtml).join(", ")}</p>` : ""}
-          ${item.ebayGroupKey ? `<p class="meta">Variation group: ${escapeHtml(item.ebayGroupKey)}</p>` : ""}
-          ${Array.isArray(item.ebayPublishDetails) && item.ebayPublishDetails.length ? `<p class="meta">eBay status: ${item.ebayPublishVerified ? "Verified published" : "Returned by publish call; not verified in offer lookup yet"}</p>` : ""}
-        </div>
-        <span class="badge">${item.publishedMode === "simulated" ? "Simulated" : item.publishedMode === "sandbox" ? "Sandbox" : "Live"}</span>
-      </article>
+        <span>
+          <strong>${escapeHtml(item.title)}</strong>
+          <span class="meta">${escapeHtml(row.sku || item.sku)} / ${money(row.salePrice)} / ${money(pricing.margin)} margin</span>
+          <span class="meta">eBay listing: ${escapeHtml(listingId || "Not returned")}${listingUrl ? ` / Open in detail` : ""}</span>
+        </span>
+        <span class="badge ${item.status === "withdrawn" ? "badge-muted" : ""}">${publishedModeLabel(item)}</span>
+      </button>
     `;
+  }).join("");
+
+  list.querySelectorAll("[data-published-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedPublishedId = button.dataset.publishedId;
+      renderPublished();
+    });
+  });
+
+  renderPublishedDetail(state.published.find((item) => item.id === state.selectedPublishedId));
+}
+
+function mainPublishedRow(item) {
+  const rows = listingRows(item);
+  const index = mainListingRowIndex(item, rows);
+  return rows[index] || item;
+}
+
+function ebayListingUrl(item) {
+  const listingId = String(item.ebayListingId || "");
+  if (!/^\d+$/.test(listingId)) return "";
+  const base = item.publishedMode === "sandbox" ? "https://sandbox.ebay.com/itm/" : "https://www.ebay.co.uk/itm/";
+  return `${base}${encodeURIComponent(listingId)}`;
+}
+
+function publishedModeLabel(item) {
+  if (item.status === "withdrawn") return "Withdrawn";
+  if (item.publishedMode === "simulated") return "Simulated";
+  if (item.publishedMode === "sandbox") return "Sandbox";
+  return "Live";
+}
+
+function renderPublishedDetail(item) {
+  const detail = $("#publishedDetail");
+  if (!item) {
+    detail.innerHTML = '<div class="empty-state">Select a published listing to inspect pricing, sales, and eBay status.</div>';
+    return;
+  }
+
+  const row = mainPublishedRow(item);
+  const pricing = draftPricing(row);
+  const rows = listingRows(item);
+  const listingUrl = ebayListingUrl(item);
+  const history = Array.isArray(item.priceHistory) ? item.priceHistory.slice(-10).reverse() : [];
+  const sales = publishedSalesFor(item);
+  const latestSaleDate = sales.orders[0]?.createdAt ? new Date(sales.orders[0].createdAt).toLocaleDateString() : "No sales found";
+
+  detail.innerHTML = `
+    <article class="published-detail-panel">
+      <div class="published-detail-header">
+        <div>
+          <p class="eyebrow">${escapeHtml(publishedModeLabel(item))} listing</p>
+          <h3>${escapeHtml(item.title)}</h3>
+          <p class="meta">${escapeHtml(row.sku || item.sku)}${item.ebayListingId ? ` / eBay ${escapeHtml(item.ebayListingId)}` : ""}</p>
+        </div>
+        ${listingUrl ? `<a class="detail-link" href="${escapeAttr(listingUrl)}" target="_blank" rel="noreferrer">Open on eBay</a>` : ""}
+      </div>
+
+      <section class="detail-section">
+        <h4>Pricing breakdown</h4>
+        <div class="detail-metrics">
+          <div class="metric"><span>Sale price</span><strong>${money(row.salePrice)}</strong></div>
+          <div class="metric"><span>Landed cost</span><strong>${money(pricing.landedCost)}</strong></div>
+          <div class="metric"><span>Estimated eBay fees</span><strong>${money(pricing.estimatedFees)}</strong></div>
+          <div class="metric"><span>Margin</span><strong>${money(pricing.margin)}</strong></div>
+          <div class="metric"><span>Margin percent</span><strong>${pricing.marginPercent == null ? "Not calculated" : `${pricing.marginPercent}%`}</strong></div>
+          <div class="metric"><span>Target margin</span><strong>${item.targetMarginPercent ?? "Not set"}%</strong></div>
+        </div>
+        <div class="detail-table-wrap">
+          <table class="detail-table">
+            <tbody>
+              <tr><th>Item cost</th><td>${money(row.cost, row.costCurrency || "USD")}</td></tr>
+              <tr><th>CJ shipping</th><td>${money(row.shippingCost, row.costCurrency || "USD")}</td></tr>
+              <tr><th>Conversion</th><td>${row.costCurrency === "GBP" ? "GBP costs" : `${row.usdToGbp || "Not set"} GBP per USD`}</td></tr>
+              <tr><th>Other costs</th><td>${money(row.otherCostsGbp || 0)}</td></tr>
+              <tr><th>Stock listed</th><td>${escapeHtml(row.quantity ?? item.quantity ?? "Not set")}</td></tr>
+              <tr><th>Published</th><td>${item.publishedAt ? new Date(item.publishedAt).toLocaleString() : "Unknown"}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      ${rows.length > 1 ? renderPublishedVariants(rows) : ""}
+
+      <section class="detail-section">
+        <h4>Sales</h4>
+        <div class="detail-metrics">
+          <div class="metric"><span>Units sold</span><strong>${sales.units}</strong></div>
+          <div class="metric"><span>Revenue</span><strong>${money(sales.revenue)}</strong></div>
+          <div class="metric"><span>Orders matched</span><strong>${sales.orders.length}</strong></div>
+          <div class="metric"><span>Latest sale</span><strong>${escapeHtml(latestSaleDate)}</strong></div>
+        </div>
+        ${state.publishedSalesError ? `<p class="inline-status">${escapeHtml(state.publishedSalesError)}</p>` : renderSalesGraph(sales.days)}
+      </section>
+
+      <section class="detail-section">
+        <h4>Price history</h4>
+        ${
+          history.length
+            ? `<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Date</th><th>Sale price</th><th>Landed</th><th>Margin</th><th>Note</th></tr></thead><tbody>${history.map((entry) => `<tr><td>${entry.checkedAt ? new Date(entry.checkedAt).toLocaleString() : ""}</td><td>${money(entry.salePrice)}</td><td>${money(entry.landedCost)}</td><td>${money(entry.margin)}</td><td>${escapeHtml(entry.reason || entry.status || "")}</td></tr>`).join("")}</tbody></table></div>`
+            : '<p class="meta">No price tracking history has been recorded yet.</p>'
+        }
+      </section>
+
+      <section class="detail-section published-actions">
+        <div>
+          <h4>eBay action</h4>
+          <p class="meta">Withdraw ends the live eBay listing but keeps this local record for tracking.</p>
+        </div>
+        <button type="button" class="danger-action" id="withdrawListingButton" ${item.status === "withdrawn" ? "disabled" : ""}>${item.status === "withdrawn" ? "Already withdrawn" : "Withdraw from eBay"}</button>
+        <p class="inline-status" id="withdrawListingStatus"></p>
+      </section>
+    </article>
+  `;
+
+  const withdrawButton = $("#withdrawListingButton");
+  if (withdrawButton && item.status !== "withdrawn") {
+    withdrawButton.addEventListener("click", () => withdrawPublishedListing(item.id));
+  }
+}
+
+function renderPublishedVariants(rows) {
+  return `
+    <section class="detail-section">
+      <h4>Variants</h4>
+      <div class="detail-table-wrap">
+        <table class="detail-table">
+          <thead><tr><th>Variant</th><th>SKU</th><th>Sale</th><th>Landed</th><th>Margin</th><th>Qty</th></tr></thead>
+          <tbody>
+            ${rows.map((row) => {
+              const pricing = draftPricing(row);
+              return `<tr><td>${escapeHtml(row.label || row.cjVariantName || row.cjVariantId || "Variant")}</td><td>${escapeHtml(row.sku)}</td><td>${money(row.salePrice)}</td><td>${money(pricing.landedCost)}</td><td>${money(pricing.margin)}</td><td>${escapeHtml(row.quantity ?? "")}</td></tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function publishedSalesFor(item) {
+  const days = Array.from({ length: 14 }, (_, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() - (13 - index));
+    const key = date.toISOString().slice(0, 10);
+    return { key, label: date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" }), units: 0, revenue: 0 };
+  });
+  const byDate = new Map(days.map((day) => [day.key, day]));
+  const orders = [];
+  const listingId = String(item.ebayListingId || "");
+  for (const order of state.publishedSales?.orders || []) {
+    const matches = (order.items || []).filter((line) => String(line.listingId || "") === listingId);
+    if (!matches.length) continue;
+    orders.push(order);
+    const key = String(order.createdAt || "").slice(0, 10);
+    const bucket = byDate.get(key);
+    for (const line of matches) {
+      const quantity = Number(line.quantity || 0);
+      const value = Number(line.total?.value || 0);
+      if (bucket) {
+        bucket.units += quantity;
+        bucket.revenue += value;
       }
-    )
-    .join("");
+    }
+  }
+  return {
+    days,
+    orders,
+    units: days.reduce((sum, day) => sum + day.units, 0),
+    revenue: Number(days.reduce((sum, day) => sum + day.revenue, 0).toFixed(2))
+  };
+}
+
+function renderSalesGraph(days) {
+  const max = Math.max(1, ...days.map((day) => day.units));
+  if (!days.some((day) => day.units > 0)) return '<p class="meta">No matched eBay sales found in the last 14 days.</p>';
+  return `
+    <div class="sales-bars" aria-label="Units sold over the last 14 days">
+      ${days.map((day) => `<div class="sales-bar"><span style="height: ${Math.max(8, Math.round(day.units / max * 100))}%"></span><small>${escapeHtml(day.label)}</small></div>`).join("")}
+    </div>
+  `;
+}
+
+async function loadPublishedSales() {
+  try {
+    const result = await api("/api/orders?days=90&offset=0");
+    state.publishedSales = result;
+    state.publishedSalesError = "";
+  } catch (error) {
+    state.publishedSales = { orders: [] };
+    state.publishedSalesError = `Sales unavailable: ${error.message}`;
+  }
+  if ($("#publishedView").classList.contains("active")) renderPublished();
+}
+
+async function withdrawPublishedListing(id) {
+  if (!window.confirm("Withdraw this listing from eBay? This ends the active listing but keeps the record in this app.")) return;
+  const button = $("#withdrawListingButton");
+  const status = $("#withdrawListingStatus");
+  button.disabled = true;
+  status.textContent = "Withdrawing listing...";
+  try {
+    const result = await api(`/api/published/${encodeURIComponent(id)}/withdraw`, { method: "POST", body: "{}" });
+    const index = state.published.findIndex((item) => item.id === id);
+    if (index >= 0) state.published[index] = result.published;
+    renderPublished();
+  } catch (error) {
+    status.textContent = error.message;
+    button.disabled = false;
+  }
 }
 
 function renderSettings() {
