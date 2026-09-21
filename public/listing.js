@@ -24,6 +24,24 @@ export function listingRows(draft) {
   }));
 }
 
+export function collapseSingleVariation(draft) {
+  if (!draft.multiVariation) return draft;
+  const enabled = (draft.listingVariants || []).filter((row) => row.enabled);
+  if (enabled.length !== 1) return draft;
+  const row = listingRows(draft)[0];
+  if (!row) return draft;
+  return {
+    ...draft,
+    ...row,
+    multiVariation: false,
+    listingVariants: draft.listingVariants,
+    variationAxes: draft.variationAxes,
+    itemSpecifics: row.itemSpecifics,
+    supplierImages: row.supplierImages,
+    singleVariationListing: true
+  };
+}
+
 export function mainListingRowIndex(draft, rows = listingRows(draft)) {
   if (!rows.length) return -1;
   const selected = rows.findIndex((row) => row.cjVariantId && row.cjVariantId === draft.cjVariantId);
@@ -31,6 +49,7 @@ export function mainListingRowIndex(draft, rows = listingRows(draft)) {
 }
 
 export function prepareListing(draft) {
+  draft = collapseSingleVariation(draft);
   if (!draft.multiVariation) return applyTargetPrice(draft);
   const rows = listingRows(draft);
   return { ...draft, salePrice: rows.length ? Math.min(...rows.map((row) => row.salePrice || 0)) : null,

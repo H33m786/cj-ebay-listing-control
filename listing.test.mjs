@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { categoryErrors, ebaySku, inventoryGroup, listingRows, mainListingRowIndex, variationErrors } from "./public/listing.js";
+import { categoryErrors, collapseSingleVariation, ebaySku, inventoryGroup, listingRows, mainListingRowIndex, variationErrors } from "./public/listing.js";
 import { draftPricing } from "./public/pricing.js";
 
 const draft = {
@@ -49,6 +49,23 @@ test("variation validation rejects duplicate attribute combinations", () => {
     ]
   });
   assert.ok(errors.includes("Two variations have the same attribute combination."));
+});
+
+test("single enabled variation collapses to a normal listing", () => {
+  const collapsed = collapseSingleVariation({
+    ...draft,
+    multiVariation: true,
+    listingVariants: [
+      draft.listingVariants[0],
+      { ...draft.listingVariants[1], enabled: false }
+    ]
+  });
+  assert.equal(collapsed.multiVariation, false);
+  assert.equal(collapsed.singleVariationListing, true);
+  assert.equal(collapsed.cjVariantId, "v1");
+  assert.equal(collapsed.sku, "CJJACKETV1");
+  assert.equal(collapsed.itemSpecifics.Colour[0], "Grey");
+  assert.equal(collapsed.itemSpecifics.Size[0], "M");
 });
 
 test("variant rows calculate sale prices independently from the target margin", () => {

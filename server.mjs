@@ -9,7 +9,7 @@ import { createAccessGuard } from "./access.mjs";
 import { accountRequestUrl, ebayErrorMessage } from "./ebay-request.mjs";
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./public/pricing.js";
 import { normalizeQuotes } from "./cj-quotes.mjs";
-import { listingRows, mainListingRowIndex, prepareListing, variationErrors, inventoryPayload, inventoryGroup, aspectMap, categoryErrors, alignVariationAxesToSchema } from "./public/listing.js";
+import { listingRows, mainListingRowIndex, prepareListing, variationErrors, inventoryPayload, inventoryGroup, aspectMap, categoryErrors, alignVariationAxesToSchema, collapseSingleVariation } from "./public/listing.js";
 import { buildDraftDescription, buildEbayListingDescription } from "./public/description.js";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
@@ -667,6 +667,7 @@ function primaryProductGroup(product) {
 }
 
 function validateDraft(draft) {
+  draft = collapseSingleVariation(draft);
   if (draft.multiVariation) {
     const rows = listingRows(draft);
     const rowChecks = rows.map((row) => validateDraft(row));
@@ -1059,6 +1060,7 @@ function matchesCategory(product, category) {
 
 async function publishDraft(draft) {
   draft = ensureDraftSupplierImage(draft);
+  draft = collapseSingleVariation(draft);
   const validation = validateDraft(draft);
   if (!validation.passed) {
     return { ok: false, validation };
@@ -1083,6 +1085,7 @@ async function publishDraft(draft) {
     }
     const token = await getUsableEbayToken();
     draft = await alignDraftForEbayCategory(draft, token);
+    draft = collapseSingleVariation(draft);
     const categoryFailures = await ebayCategoryFailures(draft, token);
     if (categoryFailures.length) {
       return {
@@ -1994,6 +1997,13 @@ async function handleApi(req, res, url) {
       const index = store.drafts.findIndex((draft) => draft.id === id);
       if (index === -1) {
         sendJson(res, 404, { error: "Draft not found" });
+        return;
+      }
+
+      if (req.method === "DELETE" && !action) {
+        store.drafts.splice(index, 1);
+        await saveStore(store);
+        sendJson(res, 200, { deleted: true });
         return;
       }
 

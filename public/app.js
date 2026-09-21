@@ -1,5 +1,5 @@
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./pricing.js";
-import { listingRows, mainListingRowIndex, variationErrors, categoryErrors, alignVariationAxesToSchema } from "./listing.js";
+import { listingRows, mainListingRowIndex, variationErrors, categoryErrors, alignVariationAxesToSchema, collapseSingleVariation } from "./listing.js";
 import { buildDraftDescription } from "./description.js";
 import { createOrdersView } from "./orders.js";
 const ordersView = createOrdersView(document.querySelector("#ordersView"));
@@ -684,6 +684,12 @@ async function localApi(path, options, originalError) {
     const index = store.drafts.findIndex((draft) => draft.id === id);
     if (index === -1) throw originalError;
 
+    if (options.method === "DELETE" && !action) {
+      store.drafts.splice(index, 1);
+      writeHostedStore(store);
+      return { deleted: true };
+    }
+
     if (options.method === "PATCH" && !action) {
       store.drafts[index] = applyTargetPrice({ ...store.drafts[index], ...JSON.parse(options.body), updatedAt: new Date().toISOString() });
       writeHostedStore(store);
@@ -1138,6 +1144,7 @@ function renderEditor(draft) {
       <button type="submit">Save draft</button>
       <button type="button" class="secondary" id="validateButton">Run checks</button>
       <button type="button" id="publishButton" ${validation.passed ? "" : "disabled"} title="${validation.passed ? "Publish to eBay" : "Run checks and fix the listed issues first"}">Publish to eBay</button>
+      <button type="button" class="danger" id="deleteDraftButton">Delete draft</button>
     </div>
   `;
 
@@ -1415,6 +1422,18 @@ function renderEditor(draft) {
       }
     }
   });
+  $("#deleteDraftButton").addEventListener("click", async () => {
+    if (!window.confirm("Delete this draft? This only removes it from the app; it does not affect eBay.")) return;
+    try {
+      await api(`/api/drafts/${draft.id}`, { method: "DELETE" });
+      state.drafts = state.drafts.filter((item) => item.id !== draft.id);
+      state.selectedDraftId = state.drafts[0]?.id || null;
+      renderCounts();
+      renderDrafts();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
 }
 
 function supplierGalleryMarkup(draft) {
@@ -1518,6 +1537,7 @@ function collectImageUrls(urls, value) {
 
 function validateClient(draft) {
   if (draft.ebayCategorySchema?.categoryId === draft.ebayCategoryId) draft = alignVariationAxesToSchema(draft, draft.ebayCategorySchema);
+  draft = collapseSingleVariation(draft);
   if (draft.multiVariation) {
     const rows = listingRows(draft);
     const failures = [...variationErrors(draft)];
