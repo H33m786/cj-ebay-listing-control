@@ -18,36 +18,62 @@ export function draftPricing(draft) {
   const complete = Number.isFinite(rate) && rate > 0 && [draft.cost, draft.shippingCost].every((value) => value !== "" && value != null && Number.isFinite(Number(value)) && Number(value) >= 0);
   const otherCosts = Number(draft.otherCostsGbp ?? 0);
   if (!Number.isFinite(otherCosts) || otherCosts < 0) failures.push("Enter valid other costs in GBP.");
-  const landedCost = complete && Number.isFinite(otherCosts) && otherCosts >= 0 ? round((Number(draft.cost) + Number(draft.shippingCost)) * rate + otherCosts) : null;
+  const itemCostGbp = complete ? round(Number(draft.cost) * rate) : null;
+  const shippingCostGbp = complete ? round(Number(draft.shippingCost) * rate) : null;
+  const landedCost = complete && Number.isFinite(otherCosts) && otherCosts >= 0 ? round(itemCostGbp + shippingCostGbp + otherCosts) : null;
   const estimatedFees = Number.isFinite(sale) && Number.isFinite(percent) && Number.isFinite(fixed) ? round(sale * percent / 100 + fixed) : null;
   const margin = landedCost != null && estimatedFees != null ? round(sale - landedCost - estimatedFees) : null;
   if (margin != null && margin <= 0) failures.push("Listing is not profitable after estimated fees.");
-  return { failures, landedCost, estimatedFees, margin, marginPercent: margin != null && sale > 0 ? round(margin / sale * 100) : null };
+  return {
+    failures,
+    landedCost,
+    estimatedFees,
+    margin,
+    marginPercent: margin != null && sale > 0 ? round(margin / sale * 100) : null,
+    breakdown: {
+      itemCostGbp,
+      shippingCostGbp,
+      otherCostsGbp: Number.isFinite(otherCosts) && otherCosts >= 0 ? round(otherCosts) : null,
+      currency,
+      rate: Number.isFinite(rate) && rate > 0 ? rate : null,
+      feePercent: Number.isFinite(percent) ? percent : null,
+      feeFixed: Number.isFinite(fixed) ? fixed : null,
+      salePrice: Number.isFinite(sale) && sale > 0 ? round(sale) : null
+    }
+  };
 }
 
 export function targetSalePrice(draft) {
   const { landedCost } = draftPricing(draft);
-  const target = Number(draft.targetMarginPercent);
+  const targetType = draft.priceTargetType === "percent" ? "percent" : "fixed";
+  const rawTarget = targetType === "percent" ? draft.targetMarginPercent : draft.targetProfitGbp ?? 5;
+  const target = Number(rawTarget);
   const fee = Number(draft.feePercent ?? 12.8);
   const fixed = Number(draft.feeFixed ?? 0.3);
-  if (draft.targetMarginPercent == null || draft.targetMarginPercent === "" || !Number.isFinite(target) || target <= 0 || target >= 100) {
+  if (targetType === "percent" && (draft.targetMarginPercent == null || draft.targetMarginPercent === "" || !Number.isFinite(target) || target <= 0 || target >= 100)) {
     return { price: null, error: "Enter a target margin greater than 0% and below 100%." };
   }
-  if (!Number.isFinite(fee) || fee < 0 || !Number.isFinite(fixed) || fixed < 0 || target + fee >= 100) {
-    return { price: null, error: "Target margin plus percentage fees must be below 100%; fees cannot be negative." };
+  if (targetType === "fixed" && (rawTarget === "" || !Number.isFinite(target) || target <= 0)) {
+    return { price: null, error: "Enter a target profit greater than GBP 0." };
+  }
+  if (!Number.isFinite(fee) || fee < 0 || !Number.isFinite(fixed) || fixed < 0 || (targetType === "percent" && target + fee >= 100) || fee >= 100) {
+    return { price: null, error: "Percentage fees must be below 100%; fees cannot be negative." };
   }
   if (landedCost == null) return { price: null, error: "Complete supplier costs, shipping and currency conversion to calculate the sale price." };
-  // Price must cover costs, fees charged on the sale, and the requested profit share.
-  let pennies = Math.max(1, Math.ceil((landedCost + fixed) / (1 - (fee + target) / 100) * 100 - 1e-8));
+  // Price must cover costs, fees charged on the sale, and the requested profit.
+  const denominator = 1 - (fee + (targetType === "percent" ? target : 0)) / 100;
+  const numerator = landedCost + fixed + (targetType === "fixed" ? target : 0);
+  let pennies = Math.max(1, Math.ceil(numerator / denominator * 100 - 1e-8));
   if (!Number.isSafeInteger(pennies)) return { price: null, error: "The requested price exceeds the supported range." };
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const price = pennies / 100;
     const result = draftPricing({ ...draft, salePrice: price });
-    if (result.margin / price * 100 + 1e-9 >= target) return { price, error: null };
-    pennies = Math.max(pennies + 1, Math.ceil((landedCost + fixed + 0.005) / (1 - (fee + target) / 100) * 100));
+    const targetMet = targetType === "percent" ? result.margin / price * 100 + 1e-9 >= target : result.margin + 1e-9 >= target;
+    if (targetMet) return { price, error: null };
+    pennies = Math.max(pennies + 1, Math.ceil((numerator + 0.005) / denominator * 100));
     if (!Number.isSafeInteger(pennies)) break;
   }
-  return { price: null, error: "The requested margin cannot be calculated reliably. Reduce the target margin." };
+  return { price: null, error: "The requested price cannot be calculated reliably. Reduce the target profit." };
 }
 
 export function applyTargetPrice(draft) {

@@ -539,7 +539,7 @@ function makeHostedDraft(product) {
   const image = product.image && !isSampleProduct(product) ? product.image : `demo:${primaryProductGroup(product)}`;
   const supplierImages = supplierImagesForProduct(product);
   const supplierImage = supplierImages[0] || "";
-  return {
+  const draft = {
     id: crypto.randomUUID(),
     source: "cj",
     cjProductId: product.pid,
@@ -557,6 +557,14 @@ function makeHostedDraft(product) {
     stock: product.stock,
     cost: product.cost,
     shippingCost: product.shipping,
+    costCurrency: "GBP",
+    usdToGbp: null,
+    pricingReviewed: false,
+    autoPrice: true,
+    priceTargetType: "fixed",
+    targetProfitGbp: 5,
+    targetMarginPercent: 25,
+    otherCostsGbp: 0,
     salePrice: price,
     handlingDays: product.deliveryDays > 10 ? 5 : 3,
     deliveryDays: product.deliveryDays,
@@ -570,6 +578,7 @@ function makeHostedDraft(product) {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
+  return applyTargetPrice(draft);
 }
 
 async function localApi(path, options, originalError) {
@@ -928,6 +937,37 @@ function validationMarkup(validation) {
   `;
 }
 
+function pricingBreakdownMarkup(draft) {
+  const rows = draft.multiVariation ? listingRows(draft) : [];
+  const subject = rows.length ? rows[mainListingRowIndex(draft, rows)] : draft;
+  const target = targetSalePrice(subject);
+  const pricing = draftPricing({ ...subject, salePrice: target.price ?? subject.salePrice });
+  const breakdown = pricing.breakdown || {};
+  const targetText = subject.priceTargetType === "percent"
+    ? `${subject.targetMarginPercent ?? 25}% margin`
+    : `${money(subject.targetProfitGbp ?? 5)} profit`;
+  const lines = [
+    ["Item cost", money(breakdown.itemCostGbp)],
+    ["Shipping cost", money(breakdown.shippingCostGbp)],
+    ["Other costs", money(breakdown.otherCostsGbp)],
+    ["Landed cost", money(pricing.landedCost)],
+    ["Estimated eBay fees", money(pricing.estimatedFees)],
+    ["Target", targetText],
+    ["Calculated eBay price", target.price == null ? "Not calculated" : money(target.price)],
+    ["Expected profit", money(pricing.margin)]
+  ];
+  return `
+    <section class="validation-box pricing-breakdown" id="pricingBreakdown">
+      <strong>Price calculation</strong>
+      ${target.error ? `<p class="meta">${escapeHtml(target.error)}</p>` : ""}
+      <div class="metrics">
+        ${lines.map(([label, value]) => `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}
+      </div>
+      <p class="meta">Formula: sale price covers landed cost, eBay percentage fee, fixed fee, then your chosen profit target.</p>
+    </section>
+  `;
+}
+
 function splitVariantLabel(variant = {}) {
   const label = variant.variantKey || variant.variantNameEn || variant.variantSku || variant.vid || "";
   const parts = String(label).split("-").map((part) => part.trim()).filter(Boolean);
@@ -1119,7 +1159,9 @@ function renderEditor(draft) {
       <button type="button" id="refreshCjQuoteButton">Refresh CJ prices</button>
       <p class="wide inline-status" id="cjQuoteStatus"></p>` : ""}
       ${variationsMarkup(draft)}
-      <label class="wide pricing-confirmation"><input name="autoPrice" type="checkbox" ${draft.autoPrice !== false ? "checked" : ""} /> Calculate sale price from target margin</label>
+      <label class="wide pricing-confirmation"><input name="autoPrice" type="checkbox" ${draft.autoPrice !== false ? "checked" : ""} /> Calculate sale price from target profit</label>
+      <label>Profit target type <select name="priceTargetType"><option value="fixed" ${(draft.priceTargetType || "fixed") !== "percent" ? "selected" : ""}>Fixed GBP profit</option><option value="percent" ${draft.priceTargetType === "percent" ? "selected" : ""}>Percentage margin</option></select></label>
+      <label>Target profit (GBP) <input name="targetProfitGbp" type="number" step="0.01" min="0.01" value="${draft.targetProfitGbp ?? 5}" /></label>
       <label>Target profit margin (%) <input name="targetMarginPercent" type="number" step="0.1" min="0.1" max="99.9" value="${draft.targetMarginPercent ?? 25}" /></label>
       <label>Sale price (GBP) <input name="salePrice" type="number" step="0.01" min="0" value="${draft.salePrice ?? ""}" /></label>
       <p class="wide inline-status" id="targetPriceStatus"></p>
@@ -1140,6 +1182,7 @@ function renderEditor(draft) {
       ${supplierGalleryMarkup(draft)}
     </div>
     ${validationMarkup(validation)}
+    ${pricingBreakdownMarkup(draft)}
     <div class="editor-actions">
       <button type="submit">Save draft</button>
       <button type="button" class="secondary" id="validateButton">Run checks</button>
@@ -1170,6 +1213,7 @@ function renderEditor(draft) {
     }
     refreshVariationDisplays(current);
     updateValidation(current);
+    editor.querySelector("#pricingBreakdown").outerHTML = pricingBreakdownMarkup(current);
   };
   refreshPricing();
   editor.oninput = refreshPricing;
@@ -1452,7 +1496,7 @@ function supplierGalleryMarkup(draft) {
 function draftFormValues(form) {
   const formData = new FormData(form);
   const body = Object.fromEntries(formData.entries());
-  ["salePrice", "quantity", "cost", "shippingCost", "handlingDays", "deliveryDays", "usdToGbp", "feePercent", "feeFixed", "targetMarginPercent", "otherCostsGbp"].forEach((key) => {
+  ["salePrice", "quantity", "cost", "shippingCost", "handlingDays", "deliveryDays", "usdToGbp", "feePercent", "feeFixed", "targetMarginPercent", "targetProfitGbp", "otherCostsGbp"].forEach((key) => {
     body[key] = body[key] === "" ? null : Number(body[key]);
   });
   ["ebayCategorySearch", "ebayCategoryId", "ebayCategoryName"].forEach((key) => {
@@ -1483,6 +1527,7 @@ function draftFormValues(form) {
   }
   body.pricingReviewed = formData.has("pricingReviewed");
   body.autoPrice = formData.has("autoPrice");
+  body.priceTargetType = body.priceTargetType === "percent" ? "percent" : "fixed";
   return body;
 }
 
@@ -1577,7 +1622,8 @@ function validateClient(draft) {
   if (draft.quantity > draft.stock) failures.push("Quantity is higher than CJ stock.");
   if (!draft.image) failures.push("At least one image is required.");
   if (!imageUrlList(draft.supplierImages, draft.supplierImage, draft.image).length) failures.push("A real supplier image URL is required for eBay publishing.");
-  if (marginPercent < 15) warnings.push("Margin is below the 15% target.");
+  if (draft.priceTargetType === "percent" && marginPercent < Number(draft.targetMarginPercent ?? 15)) warnings.push("Margin is below the target.");
+  if ((draft.priceTargetType || "fixed") !== "percent" && margin < Number(draft.targetProfitGbp ?? 5)) warnings.push("Profit is below the target.");
   if (draft.deliveryDays > 10) warnings.push("Delivery estimate is slow for eBay buyers.");
   return { passed: failures.length === 0, failures: [...new Set(failures)], warnings, landedCost: landed, estimatedFees: fees, margin, marginPercent };
 }
@@ -1677,7 +1723,7 @@ function renderPublishedDetail(item) {
           <div class="metric"><span>Estimated eBay fees</span><strong>${money(pricing.estimatedFees)}</strong></div>
           <div class="metric"><span>Margin</span><strong>${money(pricing.margin)}</strong></div>
           <div class="metric"><span>Margin percent</span><strong>${pricing.marginPercent == null ? "Not calculated" : `${pricing.marginPercent}%`}</strong></div>
-          <div class="metric"><span>Target margin</span><strong>${item.targetMarginPercent ?? "Not set"}%</strong></div>
+          <div class="metric"><span>Target</span><strong>${item.priceTargetType === "percent" ? `${item.targetMarginPercent ?? "Not set"}%` : `${money(item.targetProfitGbp ?? 5)} profit`}</strong></div>
         </div>
         <div class="detail-table-wrap">
           <table class="detail-table">

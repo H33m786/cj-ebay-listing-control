@@ -14,7 +14,8 @@ export function listingRows(draft) {
   if (!draft.multiVariation) return [draft];
   return (draft.listingVariants || []).filter((row) => row.enabled).map((row) => applyTargetPrice({
     ...draft, ...row, multiVariation: false, listingVariants: undefined,
-    costCurrency: row.costCurrency || draft.costCurrency || "USD", autoPrice: draft.autoPrice, targetMarginPercent: draft.targetMarginPercent,
+    costCurrency: row.costCurrency || draft.costCurrency || "USD", autoPrice: draft.autoPrice, priceTargetType: draft.priceTargetType,
+    targetMarginPercent: draft.targetMarginPercent, targetProfitGbp: draft.targetProfitGbp,
     feePercent: draft.feePercent, feeFixed: draft.feeFixed, usdToGbp: draft.usdToGbp,
     otherCostsGbp: draft.otherCostsGbp,
     sku: ebaySku(draft.sku, row.cjVariantId || row.label),

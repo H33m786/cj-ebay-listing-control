@@ -2,13 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./public/pricing.js";
 
-const jacket = { source: "cj", cjProductId: "2412280910051604000", cost: 9.95, shippingCost: 11.25, costCurrency: "USD", usdToGbp: 0.75, salePrice: 25, feePercent: 12.8, feeFixed: 0.3, pricingReviewed: true };
+const jacket = { source: "cj", cjProductId: "2412280910051604000", cost: 9.95, shippingCost: 11.25, costCurrency: "USD", usdToGbp: 0.75, salePrice: 25, feePercent: 12.8, feeFixed: 0.3, pricingReviewed: true, priceTargetType: "percent" };
 test("target price meets profit margin after percentage and fixed fees", () => {
   const draft = { ...jacket, targetMarginPercent: 25, autoPrice: true };
   const result = applyTargetPrice(draft);
   assert.equal(result.salePrice, 26.05);
   const pricing = draftPricing(result);
   assert.ok(pricing.margin / result.salePrice >= 0.25);
+});
+test("target price can use a fixed GBP profit instead of a percentage margin", () => {
+  const draft = { ...jacket, priceTargetType: "fixed", targetProfitGbp: 5, autoPrice: true };
+  const result = applyTargetPrice(draft);
+  assert.equal(result.salePrice, 24.32);
+  const pricing = draftPricing(result);
+  assert.ok(pricing.margin >= 5);
+  assert.equal(pricing.breakdown.itemCostGbp, 7.46);
+  assert.equal(pricing.breakdown.shippingCostGbp, 8.44);
 });
 test("target price recalculates costs and preserves manual mode", () => {
   const draft = { ...jacket, targetMarginPercent: 25, autoPrice: true };
@@ -19,6 +28,9 @@ test("target price recalculates costs and preserves manual mode", () => {
 test("incomplete or impossible targets never produce a publishable price", () => {
   for (const targetMarginPercent of [null, "", -5, 0, 100, 90]) {
     assert.equal(targetSalePrice({ ...jacket, targetMarginPercent }).price, null);
+  }
+  for (const targetProfitGbp of ["", -5, 0]) {
+    assert.equal(targetSalePrice({ ...jacket, priceTargetType: "fixed", targetProfitGbp }).price, null);
   }
   assert.equal(targetSalePrice({ ...jacket, usdToGbp: null, targetMarginPercent: 25 }).price, null);
 });

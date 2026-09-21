@@ -34,7 +34,7 @@ export function priceProposal(row, rule, quote, offer, maxChangePercent) {
   if (shipping.currency !== "USD" || shipping.price == null || shipping.price === "" || !Number.isFinite(Number(shipping.price)) || Number(shipping.price) < 0) throw new Error("CJ shipping cost is unavailable.");
   const oldPrice = Number(offer.pricingSummary?.price?.value);
   if (offer.pricingSummary?.price?.currency !== "GBP" || !Number.isFinite(oldPrice) || oldPrice <= 0) throw new Error("The eBay offer is not a valid GBP price.");
-  const candidate = { ...row, ...rule, cost: Number(quote.cost), shippingCost: Number(shipping.price), costCurrency: "USD", pricingReviewed: true };
+  const candidate = { ...row, ...rule, priceTargetType: "percent", cost: Number(quote.cost), shippingCost: Number(shipping.price), costCurrency: "USD", pricingReviewed: true };
   const result = targetSalePrice(candidate);
   if (!result.price) throw new Error(result.error);
   const metrics = draftPricing({ ...candidate, salePrice: result.price });

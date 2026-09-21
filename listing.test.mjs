@@ -11,6 +11,7 @@ const draft = {
   itemSpecifics: { Brand: "Unbranded", Type: "Jacket" },
   variationAxes: ["Colour", "Size"],
   autoPrice: true,
+  priceTargetType: "percent",
   targetMarginPercent: 15,
   feePercent: 12.8,
   feeFixed: 0.3,

@@ -607,7 +607,7 @@ function makeDraftFromProduct(product) {
   const image = product.image && !isSampleProduct(product) ? product.image : `demo:${primaryProductGroup(product)}`;
   const supplierImages = supplierImagesForProduct(product);
   const supplierImage = supplierImages[0] || "";
-  return {
+  const draft = {
     id: crypto.randomUUID(),
     source: "cj",
     cjProductId: product.pid,
@@ -635,6 +635,8 @@ function makeDraftFromProduct(product) {
     usdToGbp: null,
     pricingReviewed: false,
     autoPrice: true,
+    priceTargetType: "fixed",
+    targetProfitGbp: 5,
     targetMarginPercent: 25,
     otherCostsGbp: 0,
     salePrice: isSampleProduct(product) ? price : 0,
@@ -650,6 +652,7 @@ function makeDraftFromProduct(product) {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
+  return applyTargetPrice(draft);
 }
 
 function isSampleProduct(product) {
@@ -713,7 +716,8 @@ function validateDraft(draft) {
   if (draft.stock != null && draft.quantity > draft.stock) failures.push("Quantity is higher than CJ stock.");
   if (!draft.image) failures.push("At least one image is required.");
   if (!ebayImageUrlsForDraft(ensureDraftSupplierImage(draft))) failures.push("A real supplier image URL is required for eBay publishing.");
-  if (marginPercent < 15) warnings.push("Margin is below the 15% target.");
+  if (draft.priceTargetType === "percent" && marginPercent < Number(draft.targetMarginPercent ?? 15)) warnings.push("Margin is below the target.");
+  if ((draft.priceTargetType || "fixed") !== "percent" && margin < Number(draft.targetProfitGbp ?? 5)) warnings.push("Profit is below the target.");
   if (draft.deliveryDays > 10) warnings.push("Delivery estimate is slow for eBay buyers.");
   if (foundBlocked.length) failures.push(`Blocked brand/risk terms found: ${foundBlocked.join(", ")}.`);
   if (draft.riskyTerms?.length) warnings.push(`Supplier data contains review terms: ${draft.riskyTerms.join(", ")}.`);
