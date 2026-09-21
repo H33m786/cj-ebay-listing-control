@@ -969,6 +969,17 @@ function showEditorError(editor, message) {
   });
 }
 
+function showEditorStatus(editor, title, message) {
+  const box = editor.querySelector(".validation-box");
+  if (!box) return;
+  box.outerHTML = `
+    <section class="validation-box pass">
+      <strong>${escapeHtml(title)}</strong>
+      <p class="meta">${escapeHtml(message)}</p>
+    </section>
+  `;
+}
+
 function pricingBreakdownMarkup(draft) {
   const rows = draft.multiVariation ? listingRows(draft) : [];
   const subject = rows.length ? rows[mainListingRowIndex(draft, rows)] : draft;
@@ -1594,9 +1605,19 @@ function renderEditor(draft) {
     button.textContent = "Uploading...";
     try {
       await saveDraftSilently(draft.id);
+      const validation = await api(`/api/drafts/${draft.id}/validate`, { method: "POST" });
+      if (!validation.validation?.passed) {
+        editor.querySelector(".validation-box").outerHTML = validationMarkup(validation.validation);
+        button.disabled = false;
+        button.textContent = "Publish to eBay";
+        return;
+      }
+      showEditorStatus(editor, "Uploading to eBay", "Please wait while eBay creates the listing and the app saves the published record.");
       const result = await api(`/api/drafts/${draft.id}/publish`, { method: "POST" });
-      state.published = [result.published, ...state.published.filter((item) => item.id !== result.published.id)];
-      state.drafts = state.drafts.filter((item) => item.id !== draft.id);
+      if (!result.published?.id) throw new Error("eBay upload finished, but the app did not receive a published listing record.");
+      const latest = await api("/api/drafts");
+      state.drafts = latest.drafts || [];
+      state.published = latest.published || [result.published, ...state.published.filter((item) => item.id !== result.published.id)];
       state.selectedDraftId = state.drafts[0]?.id || null;
       state.selectedPublishedId = result.published.id;
       renderCounts();
