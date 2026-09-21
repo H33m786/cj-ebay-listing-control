@@ -1117,7 +1117,11 @@ async function publishDraft(draft) {
         }
       };
     }
-    return publishDraftToEbay(draft, token);
+    try {
+      return await publishDraftToEbay(draft, token);
+    } catch (error) {
+      return ebayPublishValidationError(error, validateDraft(draft));
+    }
   }
 
   return {
@@ -1222,6 +1226,25 @@ async function ebayStage(stage, action) {
   } catch (error) {
     throw new Error(`eBay failed while ${stage}: ${error.message}`);
   }
+}
+
+function ebayPublishValidationError(error, validation) {
+  const message = String(error?.message || "");
+  if (message.includes("25005") || /does not support multi-variation|multi-SKU/i.test(message)) {
+    return {
+      ok: false,
+      validation: {
+        ...validation,
+        passed: false,
+        failures: [...new Set([
+          ...(validation.failures || []),
+          "This eBay category does not support multi-variation listings. Choose another eBay category that supports variations, or turn off multi-variation and publish one selected variant at a time."
+        ])],
+        warnings: validation.warnings || []
+      }
+    };
+  }
+  throw error;
 }
 
 async function verifyPublishedOffers(skus, token) {
