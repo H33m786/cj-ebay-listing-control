@@ -955,6 +955,20 @@ function validationMarkup(validation) {
   `;
 }
 
+function showEditorError(editor, message) {
+  const box = editor.querySelector(".validation-box");
+  if (!box) return;
+  box.outerHTML = validationMarkup({
+    passed: false,
+    failures: [message || "Something went wrong. Please try again."],
+    warnings: [],
+    landedCost: null,
+    estimatedFees: null,
+    margin: null,
+    marginPercent: null
+  });
+}
+
 function pricingBreakdownMarkup(draft) {
   const rows = draft.multiVariation ? listingRows(draft) : [];
   const subject = rows.length ? rows[mainListingRowIndex(draft, rows)] : draft;
@@ -1496,14 +1510,14 @@ function renderEditor(draft) {
   };
   $("#validateButton").addEventListener("click", async () => {
     try {
-      await saveDraftFromForm(draft.id);
+      await saveDraftSilently(draft.id);
       const result = await api(`/api/drafts/${draft.id}/validate`, { method: "POST" });
       editor.querySelector(".validation-box").outerHTML = validationMarkup(result.validation);
       const publishButton = editor.querySelector("#publishButton");
       publishButton.disabled = !result.validation.passed;
       publishButton.title = result.validation.passed ? "Publish to eBay" : "Run checks and fix the listed issues first";
     } catch (error) {
-      alert(error.message);
+      showEditorError(editor, error.message);
     }
   });
   $("#marketCheckButton").addEventListener("click", async () => {
@@ -1517,10 +1531,7 @@ function renderEditor(draft) {
       </section>
     `;
     try {
-      const body = draftFormValues(editor);
-      const saved = await api(`/api/drafts/${draft.id}`, { method: "PATCH", body: JSON.stringify(body) });
-      const index = state.drafts.findIndex((item) => item.id === draft.id);
-      if (index >= 0) state.drafts[index] = saved.draft;
+      await saveDraftSilently(draft.id, draftFormValues(editor));
       const result = await api(`/api/drafts/${draft.id}/market-check`, { method: "POST" });
       editor.querySelector("#marketCheck").outerHTML = marketCheckMarkup(result.market);
     } catch (error) {
@@ -1537,7 +1548,7 @@ function renderEditor(draft) {
   });
   $("#publishButton").addEventListener("click", async () => {
     try {
-      await saveDraftFromForm(draft.id);
+      await saveDraftSilently(draft.id);
       const result = await api(`/api/drafts/${draft.id}/publish`, { method: "POST" });
       state.published.unshift(result.published);
       state.drafts = state.drafts.filter((item) => item.id !== draft.id);
@@ -1550,7 +1561,7 @@ function renderEditor(draft) {
       if (error.body?.validation) {
         editor.querySelector(".validation-box").outerHTML = validationMarkup(error.body.validation);
       } else {
-        alert(error.message);
+        showEditorError(editor, error.message);
       }
     }
   });
@@ -1621,13 +1632,18 @@ function draftFormValues(form) {
 
 async function saveDraftFromForm(id) {
   const body = draftFormValues($("#draftEditor"));
+  await saveDraftSilently(id, body);
+  renderDrafts();
+}
+
+async function saveDraftSilently(id, body = draftFormValues($("#draftEditor"))) {
   const result = await api(`/api/drafts/${id}`, {
     method: "PATCH",
     body: JSON.stringify(body)
   });
   const index = state.drafts.findIndex((draft) => draft.id === id);
-  state.drafts[index] = result.draft;
-  renderDrafts();
+  if (index >= 0) state.drafts[index] = result.draft;
+  return result;
 }
 
 function estimateFees(price) {
