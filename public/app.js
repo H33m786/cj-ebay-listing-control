@@ -1547,17 +1547,22 @@ function renderEditor(draft) {
     }
   });
   $("#publishButton").addEventListener("click", async () => {
+    const button = $("#publishButton");
+    button.disabled = true;
+    button.textContent = "Uploading...";
     try {
       await saveDraftSilently(draft.id);
       const result = await api(`/api/drafts/${draft.id}/publish`, { method: "POST" });
-      state.published.unshift(result.published);
+      state.published = [result.published, ...state.published.filter((item) => item.id !== result.published.id)];
       state.drafts = state.drafts.filter((item) => item.id !== draft.id);
       state.selectedDraftId = state.drafts[0]?.id || null;
+      state.selectedPublishedId = result.published.id;
       renderCounts();
-      renderDrafts();
-      renderPublished();
       setView("published");
+      renderPublished();
     } catch (error) {
+      button.disabled = false;
+      button.textContent = "Publish to eBay";
       if (error.body?.validation) {
         editor.querySelector(".validation-box").outerHTML = validationMarkup(error.body.validation);
       } else {
