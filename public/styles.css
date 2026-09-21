@@ -640,6 +640,27 @@ dd {
   padding-left: 18px;
 }
 
+.market-examples {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.market-examples article {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.market-examples strong,
+.market-examples span {
+  display: block;
+}
+
+.market-examples span {
+  color: var(--muted);
+  margin-top: 3px;
+}
+
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

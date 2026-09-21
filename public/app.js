@@ -1,6 +1,7 @@
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./pricing.js";
 import { listingRows, mainListingRowIndex, variationErrors, categoryErrors, alignVariationAxesToSchema, collapseSingleVariation } from "./listing.js";
 import { buildDraftDescription } from "./description.js";
+import { compareDraftToMarket, marketSearchTerm } from "./market.js";
 import { createOrdersView } from "./orders.js";
 const ordersView = createOrdersView(document.querySelector("#ordersView"));
 import { createRepricingView } from "./repricing.js";
@@ -687,7 +688,7 @@ async function localApi(path, options, originalError) {
     return { draft, validation: validateClient(draft) };
   }
 
-  const draftMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)(?:\/(validate|publish))?$/);
+  const draftMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)(?:\/(validate|publish|market-check))?$/);
   if (draftMatch) {
     const [, id, action] = draftMatch;
     const index = store.drafts.findIndex((draft) => draft.id === id);
@@ -707,6 +708,23 @@ async function localApi(path, options, originalError) {
 
     if (options.method === "POST" && action === "validate") {
       return { validation: validateClient(store.drafts[index]) };
+    }
+
+    if (options.method === "POST" && action === "market-check") {
+      const draft = store.drafts[index];
+      const term = marketSearchTerm(draft);
+      const competitors = sampleProducts
+        .filter((product) => matchesProduct(product, term) || matchesCategory(product, draft.category || ""))
+        .slice(0, 8)
+        .map((product) => ({
+          title: product.title,
+          price: Number(((product.cost + product.shipping) * 1.6 + 5).toFixed(2)),
+          currency: "GBP",
+          image: product.image,
+          url: "",
+          seller: "sample"
+        }));
+      return { market: { generatedAt: new Date().toISOString(), marketplace: "sample", ...compareDraftToMarket(draft, competitors) } };
     }
 
     if (options.method === "POST" && action === "publish") {
@@ -968,6 +986,45 @@ function pricingBreakdownMarkup(draft) {
   `;
 }
 
+function marketCheckMarkup(market = null) {
+  if (!market) {
+    return `
+      <section class="validation-box market-check" id="marketCheck">
+        <strong>Market comparison</strong>
+        <p class="meta">Compare this draft with similar active eBay listings before publishing.</p>
+      </section>
+    `;
+  }
+  const competitors = market.competitors || [];
+  return `
+    <section class="validation-box market-check" id="marketCheck">
+      <strong>Market comparison score: ${escapeHtml(market.score ?? "0")}/100</strong>
+      <p class="meta">${escapeHtml(market.query || "")} / ${escapeHtml(market.marketplace || "EBAY_GB")} / ${escapeHtml(market.competitorCount || 0)} examples</p>
+      <div class="metrics">
+        <div class="metric"><span>Your price</span><strong>${money(market.salePrice)}</strong></div>
+        <div class="metric"><span>Median competitor</span><strong>${money(market.medianPrice)}</strong></div>
+        <div class="metric"><span>Position</span><strong>${escapeHtml(market.pricePosition || "Unknown")}</strong></div>
+        <div class="metric"><span>Title match</span><strong>${escapeHtml(market.keywordScore ?? 0)}%</strong></div>
+        <div class="metric"><span>Images</span><strong>${escapeHtml(market.imageCount ?? 0)}</strong></div>
+        <div class="metric"><span>Specifics</span><strong>${escapeHtml(market.specificsCount ?? 0)}</strong></div>
+      </div>
+      <h3>Recommended fixes</h3>
+      <ul>${(market.recommendations || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      ${competitors.length ? `
+        <h3>Similar eBay examples</h3>
+        <div class="market-examples">
+          ${competitors.slice(0, 5).map((item) => `
+            <article>
+              <strong>${escapeHtml(item.title)}</strong>
+              <span>${money(item.price, item.currency || "GBP")}${item.url ? ` / <a href="${escapeAttr(item.url)}" target="_blank" rel="noreferrer">View</a>` : ""}</span>
+            </article>
+          `).join("")}
+        </div>
+      ` : ""}
+    </section>
+  `;
+}
+
 function splitVariantLabel(variant = {}) {
   const label = variant.variantKey || variant.variantNameEn || variant.variantSku || variant.vid || "";
   const parts = String(label).split("-").map((part) => part.trim()).filter(Boolean);
@@ -1183,9 +1240,11 @@ function renderEditor(draft) {
     </div>
     ${validationMarkup(validation)}
     ${pricingBreakdownMarkup(draft)}
+    ${marketCheckMarkup()}
     <div class="editor-actions">
       <button type="submit">Save draft</button>
       <button type="button" class="secondary" id="validateButton">Run checks</button>
+      <button type="button" class="secondary" id="marketCheckButton">Compare market</button>
       <button type="button" id="publishButton" ${validation.passed ? "" : "disabled"} title="${validation.passed ? "Publish to eBay" : "Run checks and fix the listed issues first"}">Publish to eBay</button>
       <button type="button" class="danger" id="deleteDraftButton">Delete draft</button>
     </div>
@@ -1445,6 +1504,35 @@ function renderEditor(draft) {
       publishButton.title = result.validation.passed ? "Publish to eBay" : "Run checks and fix the listed issues first";
     } catch (error) {
       alert(error.message);
+    }
+  });
+  $("#marketCheckButton").addEventListener("click", async () => {
+    const button = $("#marketCheckButton");
+    button.disabled = true;
+    button.textContent = "Comparing...";
+    editor.querySelector("#marketCheck").outerHTML = `
+      <section class="validation-box market-check" id="marketCheck">
+        <strong>Market comparison</strong>
+        <p class="meta">Searching eBay for similar active listings...</p>
+      </section>
+    `;
+    try {
+      const body = draftFormValues(editor);
+      const saved = await api(`/api/drafts/${draft.id}`, { method: "PATCH", body: JSON.stringify(body) });
+      const index = state.drafts.findIndex((item) => item.id === draft.id);
+      if (index >= 0) state.drafts[index] = saved.draft;
+      const result = await api(`/api/drafts/${draft.id}/market-check`, { method: "POST" });
+      editor.querySelector("#marketCheck").outerHTML = marketCheckMarkup(result.market);
+    } catch (error) {
+      editor.querySelector("#marketCheck").outerHTML = `
+        <section class="validation-box market-check fail" id="marketCheck">
+          <strong>Market comparison failed</strong>
+          <p class="meta">${escapeHtml(error.message)}</p>
+        </section>
+      `;
+    } finally {
+      button.disabled = false;
+      button.textContent = "Compare market";
     }
   });
   $("#publishButton").addEventListener("click", async () => {

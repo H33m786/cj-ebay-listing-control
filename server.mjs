@@ -8,6 +8,7 @@ import { createStorage } from "./storage.mjs";
 import { createAccessGuard } from "./access.mjs";
 import { accountRequestUrl, ebayErrorMessage } from "./ebay-request.mjs";
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./public/pricing.js";
+import { compareDraftToMarket, marketSearchTerm } from "./public/market.js";
 import { normalizeQuotes } from "./cj-quotes.mjs";
 import { listingRows, mainListingRowIndex, prepareListing, variationErrors, inventoryPayload, inventoryGroup, aspectMap, categoryErrors, alignVariationAxesToSchema, collapseSingleVariation } from "./public/listing.js";
 import { buildDraftDescription, buildEbayListingDescription } from "./public/description.js";
@@ -894,12 +895,13 @@ async function researchOpportunities(url) {
   };
 }
 
-async function searchEbayMarket(term, token) {
+async function searchEbayMarket(term, token, options = {}) {
   const query = new URLSearchParams({
     q: term,
     limit: "12",
     filter: "buyingOptions:{FIXED_PRICE},conditions:{NEW}"
   });
+  if (/^\d+$/.test(options.categoryId || "")) query.set("category_ids", options.categoryId);
   const result = await ebayApi(`/buy/browse/v1/item_summary/search?${query}`, token);
   return (result.itemSummaries || []).map((item) => ({
     itemId: item.itemId,
@@ -908,8 +910,22 @@ async function searchEbayMarket(term, token) {
     currency: item.price?.currency || "GBP",
     image: item.image?.imageUrl || "",
     url: item.itemWebUrl || "",
-    seller: item.seller?.username || ""
+    seller: item.seller?.username || "",
+    shippingCost: Number(item.shippingOptions?.[0]?.shippingCost?.value ?? 0),
+    shippingCurrency: item.shippingOptions?.[0]?.shippingCost?.currency || item.price?.currency || "GBP"
   })).filter((item) => item.price > 0);
+}
+
+async function draftMarketCheck(draft) {
+  const token = await getEbayAppToken();
+  const prepared = prepareListing(draft);
+  const term = marketSearchTerm(prepared);
+  const competitors = await searchEbayMarket(term, token, { categoryId: prepared.ebayCategoryId });
+  return {
+    generatedAt: new Date().toISOString(),
+    marketplace: process.env.EBAY_MARKETPLACE_ID || "EBAY_GB",
+    ...compareDraftToMarket(prepared, competitors)
+  };
 }
 
 function titleMatchScore(term, title) {
@@ -1994,7 +2010,7 @@ async function handleApi(req, res, url) {
       return;
     }
 
-    const draftMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)(?:\/(validate|publish))?$/);
+    const draftMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)(?:\/(validate|publish|market-check))?$/);
     if (draftMatch) {
       const [, id, action] = draftMatch;
       const store = await readStore();
@@ -2021,6 +2037,15 @@ async function handleApi(req, res, url) {
 
       if (req.method === "POST" && action === "validate") {
         sendJson(res, 200, { validation: validateDraft(store.drafts[index]) });
+        return;
+      }
+
+      if (req.method === "POST" && action === "market-check") {
+        try {
+          sendJson(res, 200, { market: await draftMarketCheck(store.drafts[index]) });
+        } catch (error) {
+          sendJson(res, 400, { error: error.message });
+        }
         return;
       }
 
