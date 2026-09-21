@@ -1,7 +1,7 @@
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./pricing.js";
 import { listingRows, mainListingRowIndex, variationErrors, categoryErrors, alignVariationAxesToSchema, collapseSingleVariation } from "./listing.js";
 import { buildDraftDescription } from "./description.js";
-import { compareDraftToMarket, marketSearchTerm } from "./market.js";
+import { compareDraftToMarket, marketSearchTerm, prePublishChecklist } from "./market.js";
 import { createOrdersView } from "./orders.js";
 const ordersView = createOrdersView(document.querySelector("#ordersView"));
 import { createRepricingView } from "./repricing.js";
@@ -1000,12 +1000,50 @@ function pricingBreakdownMarkup(draft) {
   `;
 }
 
-function marketCheckMarkup(market = null) {
+function checklistItemsMarkup(checklist) {
+  return `
+    <div class="quality-list">
+      ${(checklist.items || []).map((item) => `
+        <article class="quality-item quality-${escapeAttr(item.status)}">
+          <span>${escapeHtml(item.name)}</span>
+          <strong>${escapeHtml(Math.round(item.score))}/100</strong>
+          <p>${escapeHtml(item.message)}</p>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function suggestedTitleMarkup(title, currentTitle = "") {
+  if (!title || title.trim().toLowerCase() === String(currentTitle || "").trim().toLowerCase()) return "";
+  return `
+    <div class="suggested-title">
+      <span>Suggested title</span>
+      <strong>${escapeHtml(title)}</strong>
+      <button type="button" class="secondary" data-suggested-title="${escapeAttr(title)}">Use title</button>
+    </div>
+  `;
+}
+
+function bindMarketCheckActions(editor) {
+  editor.querySelectorAll("[data-suggested-title]").forEach((button) => {
+    button.addEventListener("click", () => {
+      editor.elements.title.value = button.dataset.suggestedTitle || "";
+      editor.elements.ebayCategorySearch.value = editor.elements.title.value;
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  });
+}
+
+function marketCheckMarkup(market = null, draft = null) {
   if (!market) {
+    const checklist = draft ? prePublishChecklist(draft, []) : null;
     return `
       <section class="validation-box market-check" id="marketCheck">
-        <strong>Market comparison</strong>
-        <p class="meta">Compare this draft with similar active eBay listings before publishing.</p>
+        <strong>Listing quality${checklist ? `: ${escapeHtml(checklist.score)}/100` : ""}</strong>
+        <p class="meta">Run market comparison to score this against similar active eBay listings.</p>
+        ${checklist ? checklistItemsMarkup(checklist) : ""}
+        ${checklist ? suggestedTitleMarkup(checklist.suggestedTitle, draft.title) : ""}
       </section>
     `;
   }
@@ -1014,6 +1052,8 @@ function marketCheckMarkup(market = null) {
     <section class="validation-box market-check" id="marketCheck">
       <strong>Market comparison score: ${escapeHtml(market.score ?? "0")}/100</strong>
       <p class="meta">${escapeHtml(market.query || "")} / ${escapeHtml(market.marketplace || "EBAY_GB")} / ${escapeHtml(market.competitorCount || 0)} examples</p>
+      ${market.checklist ? `<h3>Pre-publish checklist: ${escapeHtml(market.checklist.score)}/100</h3>${checklistItemsMarkup(market.checklist)}` : ""}
+      ${suggestedTitleMarkup(market.suggestedTitle, draft?.title || "")}
       <div class="metrics">
         <div class="metric"><span>Your price</span><strong>${money(market.salePrice)}</strong></div>
         <div class="metric"><span>Median competitor</span><strong>${money(market.medianPrice)}</strong></div>
@@ -1254,7 +1294,7 @@ function renderEditor(draft) {
     </div>
     ${validationMarkup(validation)}
     ${pricingBreakdownMarkup(draft)}
-    ${marketCheckMarkup()}
+    ${marketCheckMarkup(null, draft)}
     <div class="editor-actions">
       <button type="submit">Save draft</button>
       <button type="button" class="secondary" id="validateButton">Run checks</button>
@@ -1289,6 +1329,7 @@ function renderEditor(draft) {
     editor.querySelector("#pricingBreakdown").outerHTML = pricingBreakdownMarkup(current);
   };
   refreshPricing();
+  bindMarketCheckActions(editor);
   editor.oninput = refreshPricing;
   editor.onchange = refreshPricing;
   const variantSelect = editor.querySelector("#cjVariantSelect");
@@ -1533,7 +1574,8 @@ function renderEditor(draft) {
     try {
       await saveDraftSilently(draft.id, draftFormValues(editor));
       const result = await api(`/api/drafts/${draft.id}/market-check`, { method: "POST" });
-      editor.querySelector("#marketCheck").outerHTML = marketCheckMarkup(result.market);
+      editor.querySelector("#marketCheck").outerHTML = marketCheckMarkup(result.market, { ...draft, ...draftFormValues(editor) });
+      bindMarketCheckActions(editor);
     } catch (error) {
       editor.querySelector("#marketCheck").outerHTML = `
         <section class="validation-box market-check fail" id="marketCheck">

@@ -1,6 +1,7 @@
 import { draftPricing } from "./pricing.js";
 
 const stopWords = new Set(["and", "the", "for", "with", "from", "new", "mens", "womens", "women", "men", "sale", "uk"]);
+const usefulTitleWords = new Set(["case", "cover", "shockproof", "clear", "silicone", "magnetic", "magsafe", "iphone", "samsung", "galaxy", "charger", "cable", "usb", "fast", "waterproof", "jacket", "coat", "bag", "holder", "stand", "adapter", "protective"]);
 
 function round(value) {
   return Number(value.toFixed(2));
@@ -8,6 +9,21 @@ function round(value) {
 
 function words(value) {
   return String(value || "").toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2 && !stopWords.has(word));
+}
+
+function titleWord(word) {
+  const special = { iphone: "iPhone", ipad: "iPad", magsafe: "MagSafe", usb: "USB" };
+  return special[word] || word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+function trimTitle(wordsForTitle) {
+  const selected = [];
+  for (const word of wordsForTitle) {
+    const next = [...selected, titleWord(word)].join(" ");
+    if (next.length > 80) break;
+    selected.push(titleWord(word));
+  }
+  return selected.join(" ");
 }
 
 function percentile(values, position) {
@@ -33,6 +49,80 @@ export function imageCount(draft) {
   return [...new Set([draft.image, draft.supplierImage, ...(draft.supplierImages || [])].filter(Boolean))].length;
 }
 
+export function suggestedTitle(draft, competitors = []) {
+  const sourceWords = [
+    ...words(draft.title),
+    ...words(draft.category),
+    ...words(draft.ebayCategoryName),
+    ...Object.values(draft.itemSpecifics || {}).flatMap((value) => words(Array.isArray(value) ? value.join(" ") : value)),
+    ...competitors.flatMap((item) => words(item.title)).filter((word) => usefulTitleWords.has(word))
+  ];
+  const unique = [...new Set(sourceWords)].filter((word) => word.length <= 18);
+  const priority = unique.sort((a, b) => {
+    const usefulDiff = Number(usefulTitleWords.has(b)) - Number(usefulTitleWords.has(a));
+    if (usefulDiff) return usefulDiff;
+    return sourceWords.filter((word) => word === b).length - sourceWords.filter((word) => word === a).length;
+  });
+  return trimTitle(priority.slice(0, 14)) || String(draft.title || "").slice(0, 80);
+}
+
+export function prePublishChecklist(draft, competitors = []) {
+  const pricing = draftPricing(draft);
+  const prices = competitors.map((item) => Number(item.price)).filter((price) => Number.isFinite(price) && price > 0).sort((a, b) => a - b);
+  const medianPrice = percentile(prices, 0.5);
+  const salePrice = Number(draft.salePrice);
+  const titleLength = String(draft.title || "").trim().length;
+  const specificsCount = Object.values(draft.itemSpecifics || {}).filter((value) => Array.isArray(value) ? value.length : String(value || "").trim()).length;
+  const images = imageCount(draft);
+  const keywordScore = titleKeywordScore(draft, competitors);
+  const items = [
+    {
+      name: "Title",
+      score: Math.min(100, Math.round(titleLength / 70 * 100)),
+      status: titleLength >= 55 ? "pass" : titleLength >= 35 ? "warn" : "fail",
+      message: titleLength >= 55 ? "Title has enough searchable detail." : "Add more buyer terms such as product type, model, material, colour or use case."
+    },
+    {
+      name: "Market keywords",
+      score: competitors.length ? keywordScore : 50,
+      status: !competitors.length ? "warn" : keywordScore >= 50 ? "pass" : keywordScore >= 30 ? "warn" : "fail",
+      message: competitors.length ? "Compared title wording with similar eBay listings." : "Run market comparison with a broader search if this looks too thin."
+    },
+    {
+      name: "Images",
+      score: Math.min(100, images / 5 * 100),
+      status: images >= 3 ? "pass" : images >= 2 ? "warn" : "fail",
+      message: `${images} image${images === 1 ? "" : "s"} available. Aim for at least 3 clear product photos.`
+    },
+    {
+      name: "Item specifics",
+      score: Math.min(100, specificsCount / 7 * 100),
+      status: specificsCount >= 5 ? "pass" : specificsCount >= 3 ? "warn" : "fail",
+      message: `${specificsCount} specifics filled. eBay uses these for search filters.`
+    },
+    {
+      name: "Price",
+      score: !medianPrice || !Number.isFinite(salePrice) ? 50 : salePrice <= medianPrice * 1.08 ? 100 : salePrice <= medianPrice * 1.2 ? 65 : 25,
+      status: !medianPrice ? "warn" : salePrice <= medianPrice * 1.08 ? "pass" : salePrice <= medianPrice * 1.2 ? "warn" : "fail",
+      message: medianPrice ? `Your price is ${salePrice <= medianPrice ? "at or below" : "above"} the GBP ${medianPrice.toFixed(2)} market median.` : "No market median available yet."
+    },
+    {
+      name: "Profit",
+      score: pricing.margin == null ? 30 : pricing.margin > 0 ? 100 : 0,
+      status: pricing.margin == null ? "warn" : pricing.margin > 0 ? "pass" : "fail",
+      message: pricing.margin == null ? "Profit is not calculated yet." : `Expected profit after estimated fees is GBP ${pricing.margin.toFixed(2)}.`
+    },
+    {
+      name: "Delivery",
+      score: Number(draft.deliveryDays) <= 10 ? 100 : Number(draft.deliveryDays) <= 15 ? 65 : 35,
+      status: Number(draft.deliveryDays) <= 10 ? "pass" : Number(draft.deliveryDays) <= 15 ? "warn" : "fail",
+      message: Number(draft.deliveryDays) <= 10 ? "Delivery estimate is competitive." : "Long delivery can reduce conversion and visibility."
+    }
+  ];
+  const score = Math.round(items.reduce((sum, item) => sum + item.score, 0) / items.length);
+  return { score, items, suggestedTitle: suggestedTitle(draft, competitors) };
+}
+
 export function compareDraftToMarket(draft, competitors = []) {
   const prices = competitors.map((item) => Number(item.price)).filter((price) => Number.isFinite(price) && price > 0).sort((a, b) => a - b);
   const medianPrice = percentile(prices, 0.5);
@@ -44,6 +134,7 @@ export function compareDraftToMarket(draft, competitors = []) {
   const specificsCount = Object.values(draft.itemSpecifics || {}).filter((value) => Array.isArray(value) ? value.length : String(value || "").trim()).length;
   const images = imageCount(draft);
   const keywordScore = titleKeywordScore(draft, competitors);
+  const checklist = prePublishChecklist(draft, competitors);
   const recommendations = [];
   let score = competitors.length ? 72 : 50;
 
@@ -102,6 +193,8 @@ export function compareDraftToMarket(draft, competitors = []) {
     imageCount: images,
     specificsCount,
     pricing,
+    checklist,
+    suggestedTitle: checklist.suggestedTitle,
     recommendations: [...new Set(recommendations)],
     competitors: competitors.slice(0, 8)
   };
