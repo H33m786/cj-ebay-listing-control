@@ -1470,10 +1470,13 @@ async function applyPromotedListingPrices(listing) {
     const oldPrice = Number(offer.pricingSummary?.price?.value);
     const event = {
       at: new Date().toISOString(),
+      checkedAt: new Date().toISOString(),
       sku: row.sku,
       variantId: row.cjVariantId || "",
       oldPrice: Number.isFinite(oldPrice) ? oldPrice : null,
       price: target.price,
+      salePrice: target.price,
+      calculatedPrice: target.price,
       landedCost: pricing.landedCost,
       margin: pricing.margin,
       marginPercent: pricing.marginPercent,
@@ -1484,10 +1487,14 @@ async function applyPromotedListingPrices(listing) {
     if (Math.round(Number(oldPrice || 0) * 100) !== Math.round(target.price * 100)) {
       await updatePrice(request, row, offer, target.price);
       const confirmed = await findLiveOffer(request, listing, row);
-      if (confirmed.pricingSummary?.price?.currency !== "GBP" || Math.round(Number(confirmed.pricingSummary?.price?.value || 0) * 100) !== Math.round(target.price * 100)) {
+      const confirmedPrice = Number(confirmed.pricingSummary?.price?.value);
+      event.confirmedPrice = Number.isFinite(confirmedPrice) ? confirmedPrice : null;
+      if (confirmed.pricingSummary?.price?.currency !== "GBP" || Math.round(Number(confirmedPrice || 0) * 100) !== Math.round(target.price * 100)) {
         throw new Error(`eBay did not confirm the updated promoted price for ${row.sku}.`);
       }
       event.status = "updated";
+    } else {
+      event.confirmedPrice = Number.isFinite(oldPrice) ? oldPrice : null;
     }
     const targetRow = listing.multiVariation ? listing.listingVariants.find((item) => item.cjVariantId === row.cjVariantId || item.sku === row.sku) : listing;
     if (targetRow) targetRow.salePrice = target.price;

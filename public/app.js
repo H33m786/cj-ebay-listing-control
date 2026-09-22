@@ -1923,7 +1923,23 @@ function renderPublished() {
 function mainPublishedRow(item) {
   const rows = listingRows(item);
   const index = mainListingRowIndex(item, rows);
-  return rows[index] || item;
+  const row = rows[index] || item;
+  const updateRow = latestPromotionPriceRow(item, row);
+  if (updateRow?.salePrice || updateRow?.price || updateRow?.calculatedPrice) {
+    return {
+      ...row,
+      salePrice: Number(updateRow.salePrice ?? updateRow.price ?? updateRow.calculatedPrice),
+      ebayConfirmedPrice: updateRow.confirmedPrice ?? null
+    };
+  }
+  if (!item.multiVariation && Number.isFinite(Number(item.salePrice))) return { ...row, salePrice: Number(item.salePrice) };
+  return row;
+}
+
+function latestPromotionPriceRow(item, row = {}) {
+  const rows = Array.isArray(item.ebayPromotionPriceUpdate?.rows) ? item.ebayPromotionPriceUpdate.rows : [];
+  if (!rows.length) return null;
+  return rows.find((entry) => (row.sku && entry.sku === row.sku) || (row.cjVariantId && entry.variantId === row.cjVariantId)) || rows[0];
 }
 
 function ebayListingUrl(item) {
@@ -1994,7 +2010,7 @@ function renderPublishedDetail(item) {
         </div>
       </section>
 
-      ${rows.length > 1 ? renderPublishedVariants(rows) : ""}
+      ${rows.length > 1 ? renderPublishedVariants(item, rows) : ""}
 
       <section class="detail-section">
         <h4>Promotion pricing</h4>
@@ -2059,12 +2075,14 @@ function promotionPriceUpdateLabel(item) {
   const when = update.at ? ` / ${new Date(update.at).toLocaleString()}` : "";
   if (update.status === "failed") return `Failed${when}: ${escapeHtml(update.message || "eBay did not confirm the price update")}`;
   const count = Array.isArray(update.rows) ? update.rows.filter((row) => row.status === "updated").length : 0;
-  if (update.status === "updated") return `${count || "Some"} price${count === 1 ? "" : "s"} updated${when}`;
-  if (update.status === "unchanged") return `Already at calculated promoted price${when}`;
+  const prices = Array.isArray(update.rows) ? update.rows.map((row) => Number(row.confirmedPrice ?? row.salePrice ?? row.price ?? row.calculatedPrice)).filter(Number.isFinite) : [];
+  const priceText = prices.length ? ` to ${[...new Set(prices.map((price) => money(price)))].join(", ")}` : "";
+  if (update.status === "updated") return `${count || "Some"} price${count === 1 ? "" : "s"} updated${priceText}${when}`;
+  if (update.status === "unchanged") return `Already at calculated promoted price${priceText}${when}`;
   return `${escapeHtml(update.status || "Recorded")}${when}`;
 }
 
-function renderPublishedVariants(rows) {
+function renderPublishedVariants(item, rows) {
   return `
     <section class="detail-section">
       <h4>Variants</h4>
@@ -2073,8 +2091,12 @@ function renderPublishedVariants(rows) {
           <thead><tr><th>Variant</th><th>SKU</th><th>Sale</th><th>Landed</th><th>Margin</th><th>Qty</th></tr></thead>
           <tbody>
             ${rows.map((row) => {
-              const pricing = draftPricing(row);
-              return `<tr><td>${escapeHtml(row.label || row.cjVariantName || row.cjVariantId || "Variant")}</td><td>${escapeHtml(row.sku)}</td><td>${money(row.salePrice)}</td><td>${money(pricing.landedCost)}</td><td>${money(pricing.margin)}</td><td>${escapeHtml(row.quantity ?? "")}</td></tr>`;
+              const updateRow = latestPromotionPriceRow(item, row);
+              const displayRow = updateRow?.salePrice || updateRow?.price || updateRow?.calculatedPrice
+                ? { ...row, salePrice: Number(updateRow.salePrice ?? updateRow.price ?? updateRow.calculatedPrice) }
+                : row;
+              const pricing = draftPricing(displayRow);
+              return `<tr><td>${escapeHtml(row.label || row.cjVariantName || row.cjVariantId || "Variant")}</td><td>${escapeHtml(row.sku)}</td><td>${money(displayRow.salePrice)}</td><td>${money(pricing.landedCost)}</td><td>${money(pricing.margin)}</td><td>${escapeHtml(row.quantity ?? "")}</td></tr>`;
             }).join("")}
           </tbody>
         </table>
