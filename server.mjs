@@ -2,7 +2,7 @@ import http from "node:http";
 import { publishingSetup } from "./ebay-setup.mjs";
 import { linkedEbayProfile, identityScope, refreshScopes } from "./ebay-profile.mjs";
 import { fetchOrders } from "./orders.mjs";
-import { dailyDue, trackingSettings, runTracking, assertTrackingConnection } from "./repricing.mjs";
+import { dailyDue, trackingSettings, runTracking, assertTrackingConnection, findLiveOffer, updatePrice } from "./repricing.mjs";
 import { readFile as readLocalFile, mkdir, stat } from "node:fs/promises";
 import { createStorage } from "./storage.mjs";
 import { createAccessGuard } from "./access.mjs";
@@ -1453,6 +1453,58 @@ async function promotePublishedListingOnEbay(listing, adRatePercent) {
   };
 }
 
+async function applyPromotedListingPrices(listing) {
+  if (listing.publishedMode === "simulated") return { status: "simulated", rows: [] };
+  const token = await getUsableEbayToken();
+  assertMarketingReady(listing, token);
+  const rows = listingRows(listing);
+  if (!rows.length) throw new Error("This listing has no priced rows to update on eBay.");
+  const request = (pathname, options) => ebayApi(pathname, token, options);
+  const updates = [];
+  for (const row of rows) {
+    const target = targetSalePrice(row);
+    if (!target.price) throw new Error(target.error || `Could not calculate a promoted price for ${row.sku}.`);
+    const pricing = draftPricing({ ...row, salePrice: target.price });
+    if (pricing.failures.length) throw new Error(pricing.failures.join(" "));
+    const offer = await findLiveOffer(request, listing, row);
+    const oldPrice = Number(offer.pricingSummary?.price?.value);
+    const event = {
+      at: new Date().toISOString(),
+      sku: row.sku,
+      variantId: row.cjVariantId || "",
+      oldPrice: Number.isFinite(oldPrice) ? oldPrice : null,
+      price: target.price,
+      landedCost: pricing.landedCost,
+      margin: pricing.margin,
+      marginPercent: pricing.marginPercent,
+      promotedAdRatePercent: row.promotedAdRatePercent,
+      status: "unchanged",
+      reason: "Promotion ad rate applied to eBay price"
+    };
+    if (Math.round(Number(oldPrice || 0) * 100) !== Math.round(target.price * 100)) {
+      await updatePrice(request, row, offer, target.price);
+      const confirmed = await findLiveOffer(request, listing, row);
+      if (confirmed.pricingSummary?.price?.currency !== "GBP" || Math.round(Number(confirmed.pricingSummary?.price?.value || 0) * 100) !== Math.round(target.price * 100)) {
+        throw new Error(`eBay did not confirm the updated promoted price for ${row.sku}.`);
+      }
+      event.status = "updated";
+    }
+    const targetRow = listing.multiVariation ? listing.listingVariants.find((item) => item.cjVariantId === row.cjVariantId || item.sku === row.sku) : listing;
+    if (targetRow) targetRow.salePrice = target.price;
+    updates.push(event);
+  }
+  if (listing.multiVariation) {
+    const prices = (listing.listingVariants || []).filter((item) => item.enabled).map((item) => Number(item.salePrice)).filter(Number.isFinite);
+    if (prices.length) listing.salePrice = Math.min(...prices);
+  }
+  listing.priceHistory = [...updates, ...(listing.priceHistory || [])].slice(0, 200);
+  return {
+    status: updates.some((event) => event.status === "updated") ? "updated" : "unchanged",
+    at: new Date().toISOString(),
+    rows: updates
+  };
+}
+
 function ebayEnvironment() {
   return process.env.EBAY_ENV === "production" ? "production" : "sandbox";
 }
@@ -2257,9 +2309,18 @@ async function handleApi(req, res, url) {
               promotedAdRatePercent: promotion.bidPercentage
             }));
           }
+          try {
+            next.ebayPromotionPriceUpdate = await applyPromotedListingPrices(next);
+          } catch (error) {
+            next.ebayPromotionPriceUpdate = {
+              status: "failed",
+              at: new Date().toISOString(),
+              message: error.message
+            };
+          }
           store.published[index] = next;
           await saveStore(store);
-          sendJson(res, 200, { published: next, promotion });
+          sendJson(res, 200, { published: next, promotion, priceUpdate: next.ebayPromotionPriceUpdate });
         } catch (error) {
           sendJson(res, 400, { error: error.message });
         }

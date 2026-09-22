@@ -724,11 +724,20 @@ async function localApi(path, options, originalError) {
       listingVariants: (store.published[index].listingVariants || []).map((row) => ({
         ...row,
         promotedListingEnabled: true,
-        promotedAdRatePercent: rate
+        promotedAdRatePercent: rate,
+        salePrice: targetSalePrice({ ...store.published[index], ...row, promotedListingEnabled: true, promotedAdRatePercent: rate }).price ?? row.salePrice
       }))
     };
+    if (store.published[index].multiVariation) {
+      const prices = (store.published[index].listingVariants || []).filter((row) => row.enabled).map((row) => Number(row.salePrice)).filter(Number.isFinite);
+      if (prices.length) store.published[index].salePrice = Math.min(...prices);
+    } else {
+      const target = targetSalePrice(store.published[index]);
+      if (target.price) store.published[index].salePrice = target.price;
+    }
+    store.published[index].ebayPromotionPriceUpdate = { status: "simulated", at: new Date().toISOString(), rows: [] };
     writeHostedStore(store);
-    return { published: store.published[index], promotion: { campaignId: store.published[index].ebayPromotionCampaignId, bidPercentage: rate } };
+    return { published: store.published[index], promotion: { campaignId: store.published[index].ebayPromotionCampaignId, bidPercentage: rate }, priceUpdate: store.published[index].ebayPromotionPriceUpdate };
   }
 
   if (publishedMatch && !publishedMatch[2] && options.method === "PATCH") {
@@ -1977,6 +1986,7 @@ function renderPublishedDetail(item) {
               <tr><th>Other costs</th><td>${money(row.otherCostsGbp || 0)}</td></tr>
               <tr><th>Promoted listing</th><td>${row.promotedListingEnabled ? `${row.promotedAdRatePercent || 0}% ad rate included in pricing` : "Not included"}</td></tr>
               <tr><th>eBay promotion</th><td>${item.ebayPromotionCampaignId ? `${escapeHtml(item.ebayPromotionCampaignName || "Promoted listing campaign")} / ${escapeHtml(item.ebayPromotionCampaignId)}${item.ebayPromotionAppliedAt ? ` / ${new Date(item.ebayPromotionAppliedAt).toLocaleString()}` : ""}` : "Not applied through the app"}</td></tr>
+              <tr><th>Promotion price update</th><td>${promotionPriceUpdateLabel(item)}</td></tr>
               <tr><th>Stock listed</th><td>${escapeHtml(row.quantity ?? item.quantity ?? "Not set")}</td></tr>
               <tr><th>Published</th><td>${item.publishedAt ? new Date(item.publishedAt).toLocaleString() : "Unknown"}</td></tr>
             </tbody>
@@ -2041,6 +2051,17 @@ function renderPublishedDetail(item) {
   if (recommendPromotionButton) recommendPromotionButton.addEventListener("click", () => recommendPublishedPromotion(item.id));
   const applyPromotionButton = $("#applyPromotionButton");
   if (applyPromotionButton) applyPromotionButton.addEventListener("click", () => applyPublishedPromotion(item.id));
+}
+
+function promotionPriceUpdateLabel(item) {
+  const update = item.ebayPromotionPriceUpdate;
+  if (!update) return "Not run";
+  const when = update.at ? ` / ${new Date(update.at).toLocaleString()}` : "";
+  if (update.status === "failed") return `Failed${when}: ${escapeHtml(update.message || "eBay did not confirm the price update")}`;
+  const count = Array.isArray(update.rows) ? update.rows.filter((row) => row.status === "updated").length : 0;
+  if (update.status === "updated") return `${count || "Some"} price${count === 1 ? "" : "s"} updated${when}`;
+  if (update.status === "unchanged") return `Already at calculated promoted price${when}`;
+  return `${escapeHtml(update.status || "Recorded")}${when}`;
 }
 
 function renderPublishedVariants(rows) {
@@ -2201,6 +2222,13 @@ async function applyPublishedPromotion(id) {
     const index = state.published.findIndex((item) => item.id === id);
     if (index >= 0) state.published[index] = result.published;
     renderPublished();
+    const nextStatus = $("#promotionPricingStatus");
+    if (nextStatus) {
+      const priceUpdate = result.priceUpdate || result.published?.ebayPromotionPriceUpdate;
+      nextStatus.textContent = priceUpdate?.status === "failed"
+        ? `Promotion applied, but price update failed: ${priceUpdate.message}`
+        : "Promotion applied and eBay price recalculated.";
+    }
   } catch (error) {
     status.textContent = error.message;
     button.disabled = false;
