@@ -1386,6 +1386,7 @@ function renderEditor(draft) {
     ${marketCheckMarkup(null, draft)}
     <div class="editor-actions">
       <button type="submit">Save draft</button>
+      <button type="button" class="secondary" id="optimizeDraftButton">Auto-complete draft</button>
       <button type="button" class="secondary" id="validateButton">Run checks</button>
       <button type="button" class="secondary" id="marketCheckButton">Compare market</button>
       <button type="button" id="publishButton" ${validation.passed ? "" : "disabled"} title="${validation.passed ? "Publish to eBay" : "Run checks and fix the listed issues first"}">Publish to eBay</button>
@@ -1648,6 +1649,33 @@ function renderEditor(draft) {
       publishButton.title = result.validation.passed ? "Publish to eBay" : "Run checks and fix the listed issues first";
     } catch (error) {
       showEditorError(editor, error.message);
+    }
+  });
+  $("#optimizeDraftButton").addEventListener("click", async () => {
+    const button = $("#optimizeDraftButton");
+    button.disabled = true;
+    button.textContent = "Completing...";
+    try {
+      await saveDraftSilently(draft.id, draftFormValues(editor));
+      const result = await api(`/api/drafts/${draft.id}/optimize`, { method: "POST" });
+      const index = state.drafts.findIndex((item) => item.id === draft.id);
+      if (index >= 0) state.drafts[index] = result.draft;
+      renderDrafts();
+      const refreshedEditor = $("#draftEditor");
+      refreshedEditor.querySelector(".validation-box").outerHTML = validationMarkup(result.validation);
+      const message = result.changes?.length
+        ? result.changes.slice(0, 5).join(" ")
+        : "The draft was already as complete as the app could make it automatically.";
+      refreshedEditor.querySelector(".validation-box")?.insertAdjacentHTML("beforebegin", `
+        <section class="validation-box pass">
+          <strong>Draft auto-completed</strong>
+          <p class="meta">${escapeHtml(message)}</p>
+        </section>
+      `);
+    } catch (error) {
+      showEditorError(editor, error.message);
+      button.disabled = false;
+      button.textContent = "Auto-complete draft";
     }
   });
   $("#marketCheckButton").addEventListener("click", async () => {

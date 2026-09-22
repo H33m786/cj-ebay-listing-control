@@ -9,6 +9,7 @@ import { createAccessGuard } from "./access.mjs";
 import { accountRequestUrl, ebayErrorMessage } from "./ebay-request.mjs";
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./public/pricing.js";
 import { compareDraftToMarket, marketSearchTerm } from "./public/market.js";
+import { optimizeDraft } from "./public/optimizer.js";
 import { normalizeQuotes } from "./cj-quotes.mjs";
 import { listingRows, mainListingRowIndex, prepareListing, variationErrors, inventoryPayload, inventoryGroup, aspectMap, categoryErrors, alignVariationAxesToSchema, collapseSingleVariation } from "./public/listing.js";
 import { buildDraftDescription, buildEbayListingDescription } from "./public/description.js";
@@ -2443,7 +2444,7 @@ async function handleApi(req, res, url) {
       return;
     }
 
-    const draftMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)(?:\/(validate|publish|market-check))?$/);
+    const draftMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)(?:\/(validate|publish|market-check|optimize))?$/);
     if (draftMatch) {
       const [, id, action] = draftMatch;
       const store = await readStore();
@@ -2476,6 +2477,19 @@ async function handleApi(req, res, url) {
       if (req.method === "POST" && action === "market-check") {
         try {
           sendJson(res, 200, { market: await draftMarketCheck(store.drafts[index]) });
+        } catch (error) {
+          sendJson(res, 400, { error: error.message });
+        }
+        return;
+      }
+
+      if (req.method === "POST" && action === "optimize") {
+        try {
+          const market = await draftMarketCheck(store.drafts[index]).catch(() => ({ competitors: [] }));
+          const result = optimizeDraft(store.drafts[index], market.competitors || []);
+          store.drafts[index] = prepareListing({ ...result.draft, updatedAt: new Date().toISOString() });
+          await saveStore(store);
+          sendJson(res, 200, { draft: store.drafts[index], validation: validateDraft(store.drafts[index]), changes: result.changes, checklist: result.checklist });
         } catch (error) {
           sendJson(res, 400, { error: error.message });
         }
