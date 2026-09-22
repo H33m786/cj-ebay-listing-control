@@ -1465,7 +1465,8 @@ async function promotePublishedListingOnEbay(listing, adRatePercent) {
       updatedExistingCampaign: true
     };
   }
-  const campaignName = `CJ eBay ${listingId} ${new Date().toISOString().slice(0, 10)}`;
+  const campaignStamp = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 12);
+  const campaignName = `CJ eBay ${listingId} ${campaignStamp}`;
   let campaign;
   try {
     campaign = await ebayApi("/sell/marketing/v1/ad_campaign", token, {
@@ -1483,6 +1484,9 @@ async function promotePublishedListingOnEbay(listing, adRatePercent) {
       }
     });
   } catch (error) {
+    if (/35021|campaign.*name.*exists/i.test(error.message)) {
+      throw new Error("eBay says a previous promotion campaign name already exists. Try Apply promotion again; the app now generates a fresh campaign name for each attempt.");
+    }
     if (/marketplace.*not supported|145101|35095/i.test(error.message)) {
       throw new Error(`eBay rejected ${marketplaceId} for this promoted listing campaign. Check that Render has EBAY_MARKETPLACE_ID set to EBAY_GB, EBAY_ENV set to production, and that your seller account has accepted the UK Promoted Listings terms: ${promotedListingsTermsUrl(marketplaceId)}`);
     }
