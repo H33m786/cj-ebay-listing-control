@@ -41,8 +41,12 @@ const ebayScopes = [
   "https://api.ebay.com/oauth/api_scope/sell.account",
   "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
-  "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly"
+  "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
+  "https://api.ebay.com/oauth/api_scope/sell.marketing",
+  "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly"
 ];
+
+const ebayMarketingScope = "https://api.ebay.com/oauth/api_scope/sell.marketing";
 
 const ebayAccountSetupPaths = {
   locations: "/sell/inventory/v1/location?limit=100",
@@ -1297,6 +1301,137 @@ async function withdrawPublishedFromEbay(listing, token = null) {
   return { offers: results };
 }
 
+function tokenHasScope(token, scope) {
+  return String(token.scope || "").split(/\s+/).includes(scope);
+}
+
+function assertMarketingReady(listing, token) {
+  if (listing.status === "withdrawn") throw new Error("This listing has been withdrawn, so it cannot be promoted.");
+  if (listing.publishedMode === "simulated") throw new Error("This is a simulated listing. Publish it to live eBay before applying a promoted listing campaign.");
+  if (listing.publishedMode !== ebayEnvironment()) {
+    throw new Error(`This listing was published in ${listing.publishedMode || "another mode"}. Switch the app to that eBay environment before promoting it.`);
+  }
+  if (!tokenHasScope(token, ebayMarketingScope)) {
+    throw new Error("Reconnect eBay in Settings so the app can request the new marketing permission, then try applying promotion again.");
+  }
+}
+
+function promotionListingId(listing) {
+  const listingId = String(listing.ebayListingId || "").trim();
+  if (!/^\d+$/.test(listingId)) {
+    throw new Error("This published record does not have a numeric eBay listing ID yet, so eBay cannot attach a promoted listing campaign to it.");
+  }
+  return listingId;
+}
+
+function validPromotionRate(value) {
+  const rate = Number(value ?? 0);
+  if (!Number.isFinite(rate) || rate <= 0 || rate >= 100) {
+    throw new Error("Enter a promoted listing ad rate greater than 0% and below 100%.");
+  }
+  return Number(rate.toFixed(2));
+}
+
+function campaignIdFromLocation(location) {
+  const value = String(location || "");
+  return value.split("/").filter(Boolean).pop() || "";
+}
+
+function recommendedAdRateFromResponse(body, listingId) {
+  const recommendations = [
+    ...(body.listingRecommendations || []),
+    ...(body.recommendations || [])
+  ];
+  const recommendation = recommendations.find((item) => String(item.listingId || item.listing?.listingId || "") === listingId) || recommendations[0] || body;
+  const ad = recommendation.marketing?.ad || recommendation.ad || recommendation;
+  const bidPercentages = ad.bidPercentages || ad.bidPercentageRecommendations || ad.adRates || [];
+  const selected = bidPercentages.find((item) => /TRENDING|SUGGESTED|RECOMMENDED/i.test(String(item.basis || item.type || item.name || ""))) || bidPercentages[0];
+  const rawRate = selected?.value ?? selected?.bidPercentage ?? selected?.adRate ?? ad.trendingAdRate ?? ad.recommendedAdRate ?? ad.bidPercentage;
+  const rate = Number(rawRate);
+  return {
+    listingId,
+    recommendedAdRatePercent: Number.isFinite(rate) && rate > 0 ? Number(rate.toFixed(2)) : null,
+    promoteWithAd: ad.promoteWithAd ?? recommendation.promoteWithAd ?? null,
+    message: ad.message || recommendation.message || "",
+    raw: recommendation
+  };
+}
+
+async function promotionRecommendationForListing(listing) {
+  const token = await getUsableEbayToken();
+  assertMarketingReady(listing, token);
+  const listingId = promotionListingId(listing);
+  const body = await ebayApi("/sell/recommendation/v1/find?filter=recommendationTypes:{AD}&limit=10", token, {
+    method: "POST",
+    body: { listingIds: [listingId] }
+  });
+  return recommendedAdRateFromResponse(body, listingId);
+}
+
+async function promotePublishedListingOnEbay(listing, adRatePercent) {
+  const token = await getUsableEbayToken();
+  assertMarketingReady(listing, token);
+  const listingId = promotionListingId(listing);
+  const bidPercentage = validPromotionRate(adRatePercent);
+  if (listing.ebayPromotionCampaignId && listing.ebayPromotionMode === ebayEnvironment()) {
+    const updateResult = await ebayApi(`/sell/marketing/v1/ad_campaign/${encodeURIComponent(listing.ebayPromotionCampaignId)}/bulk_update_ads_bid_by_listing_id`, token, {
+      method: "POST",
+      body: {
+        requests: [
+          {
+            listingId,
+            bidPercentage: String(bidPercentage)
+          }
+        ]
+      }
+    });
+    return {
+      listingId,
+      campaignId: listing.ebayPromotionCampaignId,
+      campaignName: listing.ebayPromotionCampaignName || "Promoted listing campaign",
+      bidPercentage,
+      appliedAt: new Date().toISOString(),
+      adResult: updateResult,
+      updatedExistingCampaign: true
+    };
+  }
+  const campaignName = `CJ eBay ${listingId} ${new Date().toISOString().slice(0, 10)}`;
+  const campaign = await ebayApi("/sell/marketing/v1/ad_campaign", token, {
+    method: "POST",
+    includeHeaders: true,
+    body: {
+      marketplaceId: process.env.EBAY_MARKETPLACE_ID || "EBAY_GB",
+      campaignName,
+      fundingStrategy: {
+        fundingModel: "COST_PER_SALE",
+        bidPercentage: String(bidPercentage)
+      },
+      startDate: new Date(Date.now() + 60_000).toISOString()
+    }
+  });
+  const campaignId = campaign.body?.campaignId || campaign.body?.campaign?.campaignId || campaignIdFromLocation(campaign.headers.location);
+  if (!campaignId) throw new Error("eBay created the promotion campaign but did not return a campaign ID.");
+  const adResult = await ebayApi(`/sell/marketing/v1/ad_campaign/${encodeURIComponent(campaignId)}/bulk_create_ads_by_listing_id`, token, {
+    method: "POST",
+    body: {
+      requests: [
+        {
+          listingId,
+          bidPercentage: String(bidPercentage)
+        }
+      ]
+    }
+  });
+  return {
+    listingId,
+    campaignId,
+    campaignName,
+    bidPercentage,
+    appliedAt: new Date().toISOString(),
+    adResult
+  };
+}
+
 function ebayEnvironment() {
   return process.env.EBAY_ENV === "production" ? "production" : "sandbox";
 }
@@ -1549,6 +1684,12 @@ async function ebayApi(pathname, token, options = {}) {
   const text = await response.text();
   const body = text ? JSON.parse(text) : {};
   if (!response.ok) throw new Error(ebayErrorMessage(body, response.status));
+  if (options.includeHeaders) {
+    return {
+      body,
+      headers: Object.fromEntries(response.headers.entries())
+    };
+  }
   return body;
 }
 
@@ -1998,7 +2139,7 @@ async function handleApi(req, res, url) {
       return;
     }
 
-    const publishedMatch = url.pathname.match(/^\/api\/published\/([^/]+)(?:\/(withdraw))?$/);
+    const publishedMatch = url.pathname.match(/^\/api\/published\/([^/]+)(?:\/(withdraw|promotion-recommendation|promote))?$/);
     if (publishedMatch && (req.method === "PATCH" || req.method === "POST")) {
       const store = await readStore();
       const id = decodeURIComponent(publishedMatch[1]);
@@ -2033,6 +2174,47 @@ async function handleApi(req, res, url) {
         store.published[index] = next;
         await saveStore(store);
         sendJson(res, 200, { published: next });
+        return;
+      }
+
+      if (req.method === "POST" && action === "promotion-recommendation") {
+        try {
+          sendJson(res, 200, { recommendation: await promotionRecommendationForListing(store.published[index]) });
+        } catch (error) {
+          sendJson(res, 400, { error: error.message });
+        }
+        return;
+      }
+
+      if (req.method === "POST" && action === "promote") {
+        try {
+          const body = await readBody(req);
+          const promotion = await promotePublishedListingOnEbay(store.published[index], body.promotedAdRatePercent);
+          const next = {
+            ...store.published[index],
+            promotedListingEnabled: true,
+            promotedAdRatePercent: promotion.bidPercentage,
+            ebayPromotionCampaignId: promotion.campaignId,
+            ebayPromotionCampaignName: promotion.campaignName,
+            ebayPromotionListingId: promotion.listingId,
+            ebayPromotionAppliedAt: promotion.appliedAt,
+            ebayPromotionMode: ebayEnvironment(),
+            ebayPromotionAdResult: promotion.adResult,
+            updatedAt: new Date().toISOString()
+          };
+          if (next.multiVariation) {
+            next.listingVariants = (next.listingVariants || []).map((row) => ({
+              ...row,
+              promotedListingEnabled: true,
+              promotedAdRatePercent: promotion.bidPercentage
+            }));
+          }
+          store.published[index] = next;
+          await saveStore(store);
+          sendJson(res, 200, { published: next, promotion });
+        } catch (error) {
+          sendJson(res, 400, { error: error.message });
+        }
         return;
       }
 

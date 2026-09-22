@@ -690,8 +690,48 @@ async function localApi(path, options, originalError) {
     return { draft, validation: validateClient(draft) };
   }
 
-  const publishedMatch = url.pathname.match(/^\/api\/published\/([^/]+)$/);
-  if (publishedMatch && options.method === "PATCH") {
+  const publishedMatch = url.pathname.match(/^\/api\/published\/([^/]+)(?:\/(promotion-recommendation|promote))?$/);
+  if (publishedMatch && options.method === "POST" && publishedMatch[2] === "promotion-recommendation") {
+    const id = decodeURIComponent(publishedMatch[1]);
+    const item = store.published.find((published) => published.id === id);
+    if (!item) throw originalError;
+    return {
+      recommendation: {
+        listingId: item.ebayListingId || item.id,
+        recommendedAdRatePercent: Number(item.promotedAdRatePercent || 5),
+        promoteWithAd: true,
+        message: "Sample recommendation. Use the hosted app with eBay connected for live eBay recommendations."
+      }
+    };
+  }
+
+  if (publishedMatch && options.method === "POST" && publishedMatch[2] === "promote") {
+    const id = decodeURIComponent(publishedMatch[1]);
+    const index = store.published.findIndex((item) => item.id === id);
+    if (index === -1) throw originalError;
+    const body = JSON.parse(options.body || "{}");
+    const rate = Number(body.promotedAdRatePercent ?? 0);
+    if (!Number.isFinite(rate) || rate <= 0 || rate >= 100) throw new Error("Enter a promoted listing ad rate greater than 0% and below 100%.");
+    store.published[index] = {
+      ...store.published[index],
+      promotedListingEnabled: true,
+      promotedAdRatePercent: rate,
+      ebayPromotionCampaignId: `SIM-CAMPAIGN-${Date.now()}`,
+      ebayPromotionCampaignName: "Simulated promoted listing campaign",
+      ebayPromotionListingId: store.published[index].ebayListingId || store.published[index].id,
+      ebayPromotionAppliedAt: new Date().toISOString(),
+      ebayPromotionMode: "simulated",
+      listingVariants: (store.published[index].listingVariants || []).map((row) => ({
+        ...row,
+        promotedListingEnabled: true,
+        promotedAdRatePercent: rate
+      }))
+    };
+    writeHostedStore(store);
+    return { published: store.published[index], promotion: { campaignId: store.published[index].ebayPromotionCampaignId, bidPercentage: rate } };
+  }
+
+  if (publishedMatch && !publishedMatch[2] && options.method === "PATCH") {
     const id = decodeURIComponent(publishedMatch[1]);
     const index = store.published.findIndex((item) => item.id === id);
     if (index === -1) throw originalError;
@@ -1936,6 +1976,7 @@ function renderPublishedDetail(item) {
               <tr><th>Conversion</th><td>${row.costCurrency === "GBP" ? "GBP costs" : `${row.usdToGbp || "Not set"} GBP per USD`}</td></tr>
               <tr><th>Other costs</th><td>${money(row.otherCostsGbp || 0)}</td></tr>
               <tr><th>Promoted listing</th><td>${row.promotedListingEnabled ? `${row.promotedAdRatePercent || 0}% ad rate included in pricing` : "Not included"}</td></tr>
+              <tr><th>eBay promotion</th><td>${item.ebayPromotionCampaignId ? `${escapeHtml(item.ebayPromotionCampaignName || "Promoted listing campaign")} / ${escapeHtml(item.ebayPromotionCampaignId)}${item.ebayPromotionAppliedAt ? ` / ${new Date(item.ebayPromotionAppliedAt).toLocaleString()}` : ""}` : "Not applied through the app"}</td></tr>
               <tr><th>Stock listed</th><td>${escapeHtml(row.quantity ?? item.quantity ?? "Not set")}</td></tr>
               <tr><th>Published</th><td>${item.publishedAt ? new Date(item.publishedAt).toLocaleString() : "Unknown"}</td></tr>
             </tbody>
@@ -1950,8 +1991,12 @@ function renderPublishedDetail(item) {
         <form id="publishedPromotionForm" class="promotion-form">
           <label class="pricing-confirmation"><input name="promotedListingEnabled" type="checkbox" ${item.promotedListingEnabled === true ? "checked" : ""} /> Include promoted listing fee in profit calculations</label>
           <label>Ad rate (%) <input name="promotedAdRatePercent" type="number" min="0" max="99" step="0.1" value="${item.promotedAdRatePercent ?? 0}" /></label>
-          <button type="submit">Save promotion pricing</button>
-          <p class="inline-status" id="promotionPricingStatus">This does not start an eBay promoted listing campaign yet.</p>
+          <div class="promotion-actions">
+            <button type="button" id="recommendPromotionButton">Get recommended rate</button>
+            <button type="submit">Save pricing</button>
+            <button type="button" class="primary-action" id="applyPromotionButton" ${item.status === "withdrawn" ? "disabled" : ""}>Apply promotion on eBay</button>
+          </div>
+          <p class="inline-status" id="promotionPricingStatus">${item.ebayPromotionCampaignId ? "Promotion campaign applied through eBay." : "Saving pricing updates the calculator. Applying promotion creates the eBay ad campaign."}</p>
         </form>
       </section>
 
@@ -1992,6 +2037,10 @@ function renderPublishedDetail(item) {
   }
   const promotionForm = $("#publishedPromotionForm");
   if (promotionForm) promotionForm.addEventListener("submit", (event) => savePublishedPromotion(event, item.id));
+  const recommendPromotionButton = $("#recommendPromotionButton");
+  if (recommendPromotionButton) recommendPromotionButton.addEventListener("click", () => recommendPublishedPromotion(item.id));
+  const applyPromotionButton = $("#applyPromotionButton");
+  if (applyPromotionButton) applyPromotionButton.addEventListener("click", () => applyPublishedPromotion(item.id));
 }
 
 function renderPublishedVariants(rows) {
@@ -2104,6 +2153,57 @@ async function savePublishedPromotion(event, id) {
   } catch (error) {
     status.textContent = error.message;
     submit.disabled = false;
+  }
+}
+
+async function recommendPublishedPromotion(id) {
+  const form = $("#publishedPromotionForm");
+  const status = $("#promotionPricingStatus");
+  const button = $("#recommendPromotionButton");
+  if (!form || !status || !button) return;
+  button.disabled = true;
+  status.textContent = "Asking eBay for a recommended ad rate...";
+  try {
+    const result = await api(`/api/published/${encodeURIComponent(id)}/promotion-recommendation`, { method: "POST", body: "{}" });
+    const rate = Number(result.recommendation?.recommendedAdRatePercent);
+    if (!Number.isFinite(rate) || rate <= 0) {
+      status.textContent = result.recommendation?.message || "eBay did not return a recommended ad rate for this listing.";
+      return;
+    }
+    form.elements.promotedAdRatePercent.value = rate;
+    form.elements.promotedListingEnabled.checked = true;
+    status.textContent = `eBay recommended ${rate}%. Review it, then save pricing or apply promotion.`;
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function applyPublishedPromotion(id) {
+  const form = $("#publishedPromotionForm");
+  const status = $("#promotionPricingStatus");
+  const button = $("#applyPromotionButton");
+  if (!form || !status || !button) return;
+  const rate = Number(form.elements.promotedAdRatePercent.value || 0);
+  if (!Number.isFinite(rate) || rate <= 0 || rate >= 100) {
+    status.textContent = "Enter an ad rate greater than 0% and below 100% before applying promotion.";
+    return;
+  }
+  if (!window.confirm(`Apply a ${rate}% promoted listing ad rate on eBay for this listing? eBay only charges this ad fee when the promotion leads to a sale.`)) return;
+  button.disabled = true;
+  status.textContent = "Creating the eBay promoted listing campaign...";
+  try {
+    const result = await api(`/api/published/${encodeURIComponent(id)}/promote`, {
+      method: "POST",
+      body: JSON.stringify({ promotedAdRatePercent: rate })
+    });
+    const index = state.published.findIndex((item) => item.id === id);
+    if (index >= 0) state.published[index] = result.published;
+    renderPublished();
+  } catch (error) {
+    status.textContent = error.message;
+    button.disabled = false;
   }
 }
 

@@ -897,9 +897,38 @@ dd {
 
 .promotion-form {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(140px, 0.5fr) auto;
+  grid-template-columns: minmax(0, 1.1fr) minmax(140px, 0.35fr) minmax(260px, auto);
   gap: 12px;
   align-items: end;
+}
+
+.promotion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.promotion-actions button {
+  border: 0;
+  border-radius: 8px;
+  background: #eef3f0;
+  color: var(--ink);
+  min-height: 42px;
+  padding: 9px 12px;
+  font-weight: 800;
+}
+
+.promotion-actions button:hover {
+  background: #dfeae4;
+}
+
+.promotion-actions .primary-action {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.promotion-actions .primary-action:hover {
+  background: var(--accent-strong);
 }
 
 .promotion-form input[type="number"] {
