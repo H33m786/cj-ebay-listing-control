@@ -54,7 +54,7 @@ test("offer matching cannot target ended, other marketplace, other listing or du
 });
 test("only the price field is sent; quantity is never reset", async () => {
   await updatePrice(async (path, options) => {
-    assert.equal(path, "/sell/inventory/v1/inventory_item/bulk_update_price_quantity");
+    assert.equal(path, "/sell/inventory/v1/bulk_update_price_quantity");
     assert.deepEqual(options.body, { requests: [{ sku: "SKU", offers: [{ offerId: "offer", price: { currency: "GBP", value: "27.01" } }] }] });
     return { responses: [{ sku: "SKU", offerId: "offer", statusCode: 200 }] };
   }, row, offer, 27.01);

@@ -54,7 +54,7 @@ export async function findLiveOffer(request, listing, row) {
 }
 
 export async function updatePrice(request, row, offer, price) {
-  const result = await request("/sell/inventory/v1/inventory_item/bulk_update_price_quantity", { method: "POST", body: { requests: [{ sku: row.sku, offers: [{ offerId: offer.offerId, price: { currency: "GBP", value: price.toFixed(2) } }] }] } });
+  const result = await request("/sell/inventory/v1/bulk_update_price_quantity", { method: "POST", body: { requests: [{ sku: row.sku, offers: [{ offerId: offer.offerId, price: { currency: "GBP", value: price.toFixed(2) } }] }] } });
   const response = result.responses?.find((entry) => entry.sku === row.sku && entry.offerId === offer.offerId);
   if (!response || !Number.isInteger(response.statusCode) || response.statusCode < 200 || response.statusCode >= 300 || response.errors?.length) throw new Error("eBay did not confirm the price update. Check the listing before retrying.");
 }
