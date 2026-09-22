@@ -14,6 +14,7 @@ import { listingRows, mainListingRowIndex, prepareListing, variationErrors, inve
 import { buildDraftDescription, buildEbayListingDescription } from "./public/description.js";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,6 +28,7 @@ const tokenPath = path.join(dataDir, "ebay-token.json");
 const cjTokenPath = path.join(dataDir, "cj-token.json");
 const statePath = path.join(dataDir, "ebay-oauth-state.json");
 const port = Number(process.env.PORT || 5173);
+const host = process.env.HOST || (process.env.LOCAL_NETWORK === "true" ? "0.0.0.0" : undefined);
 const accessGuard = createAccessGuard(process.env);
 const { readFile, writeFile, withJobLock } = await createStorage(dataDir, process.env.DATABASE_URL);
 let ebayAppTokenCache = null;
@@ -609,6 +611,16 @@ function promotionResultSummary(result = {}) {
       message: warning.message || warning.longMessage
     }))
   };
+}
+
+function localNetworkUrls() {
+  const urls = [];
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries || []) {
+      if (entry.family === "IPv4" && !entry.internal) urls.push(`http://${entry.address}:${port}`);
+    }
+  }
+  return [...new Set(urls)];
 }
 
 function mockProductById(id) {
@@ -2587,8 +2599,12 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(port, () => {
+server.listen(port, host, () => {
   console.log(`CJ to eBay listing control running at http://localhost:${port}`);
+  if (host === "0.0.0.0") {
+    for (const url of localNetworkUrls()) console.log(`Network access: ${url}`);
+    console.log("Tailscale access: open the laptop's Tailscale MagicDNS name or 100.x address on this port.");
+  }
 });
 
 // External daily trigger wakes sleeping hosts; also support an always-on server.

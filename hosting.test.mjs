@@ -20,6 +20,11 @@ test("local documents survive reopening storage", async () => {
 test("hosted app refuses missing storage or login configuration", () => {
   assert.throws(() => createAccessGuard({ RENDER: "true" }), /Hosting requires/);
 });
+
+test("local network mode can use file storage without Neon", () => {
+  assert.doesNotThrow(() => createAccessGuard({ LOCAL_NETWORK: "true", APP_USERNAME: "owner", APP_PASSWORD: "test-password-long" }));
+  assert.throws(() => createAccessGuard({ LOCAL_NETWORK: "true", APP_USERNAME: "owner", APP_PASSWORD: "short" }), /Local network access requires/);
+});
 test("local price-job lock blocks overlap and releases after failure", async () => {
   const storage = await createStorage(tmpdir());
   let release;

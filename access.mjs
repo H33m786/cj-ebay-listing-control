@@ -14,11 +14,15 @@ function loginPage(next, error = "") {
 }
 
 export function createAccessGuard(env) {
-  const hosted = env.RENDER === "true" || env.NODE_ENV === "production";
+  const hosted = env.RENDER === "true" || env.HOSTED === "true";
+  const securedLocal = !hosted && Boolean(env.APP_USERNAME || env.APP_PASSWORD);
   const username = env.APP_USERNAME || "";
   const password = env.APP_PASSWORD || "";
   if (hosted && (!env.DATABASE_URL || !username || password.length < 16)) {
     throw new Error("Hosting requires DATABASE_URL, APP_USERNAME and APP_PASSWORD (at least 16 characters).");
+  }
+  if (securedLocal && (!username || password.length < 16)) {
+    throw new Error("Local network access requires APP_USERNAME and APP_PASSWORD of at least 16 characters.");
   }
   if (Boolean(username) !== Boolean(password)) throw new Error("Set both APP_USERNAME and APP_PASSWORD.");
   const digest = (value) => createHash("sha256").update(value).digest();

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node server.mjs",
+    "local": "node server.mjs",
     "start": "node server.mjs"
   },
   "engines": {

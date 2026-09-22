@@ -49,3 +49,5 @@ use Neon when DATABASE_URL is set; a database outage does not switch to local
 files. Scheduled pricing updates and always-on notifications need separate work.
 
 Verification: `node --test hosting.test.mjs`.
+
+For laptop-hosted phone access without Neon, use `LOCAL_TAILSCALE.md` instead.
