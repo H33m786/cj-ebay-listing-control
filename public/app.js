@@ -690,6 +690,29 @@ async function localApi(path, options, originalError) {
     return { draft, validation: validateClient(draft) };
   }
 
+  const publishedMatch = url.pathname.match(/^\/api\/published\/([^/]+)$/);
+  if (publishedMatch && options.method === "PATCH") {
+    const id = decodeURIComponent(publishedMatch[1]);
+    const index = store.published.findIndex((item) => item.id === id);
+    if (index === -1) throw originalError;
+    const body = JSON.parse(options.body || "{}");
+    const enabled = body.promotedListingEnabled === true;
+    const rate = Number(body.promotedAdRatePercent ?? 0);
+    if (!Number.isFinite(rate) || rate < 0 || rate >= 100) throw new Error("Enter a valid promoted listing ad rate below 100%.");
+    store.published[index] = {
+      ...store.published[index],
+      promotedListingEnabled: enabled,
+      promotedAdRatePercent: enabled ? rate : 0,
+      listingVariants: (store.published[index].listingVariants || []).map((row) => ({
+        ...row,
+        promotedListingEnabled: enabled,
+        promotedAdRatePercent: enabled ? rate : 0
+      }))
+    };
+    writeHostedStore(store);
+    return { published: store.published[index] };
+  }
+
   const draftMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)(?:\/(validate|publish|market-check))?$/);
   if (draftMatch) {
     const [, id, action] = draftMatch;
@@ -1923,6 +1946,16 @@ function renderPublishedDetail(item) {
       ${rows.length > 1 ? renderPublishedVariants(rows) : ""}
 
       <section class="detail-section">
+        <h4>Promotion pricing</h4>
+        <form id="publishedPromotionForm" class="promotion-form">
+          <label class="pricing-confirmation"><input name="promotedListingEnabled" type="checkbox" ${item.promotedListingEnabled === true ? "checked" : ""} /> Include promoted listing fee in profit calculations</label>
+          <label>Ad rate (%) <input name="promotedAdRatePercent" type="number" min="0" max="99" step="0.1" value="${item.promotedAdRatePercent ?? 0}" /></label>
+          <button type="submit">Save promotion pricing</button>
+          <p class="inline-status" id="promotionPricingStatus">This does not start an eBay promoted listing campaign yet.</p>
+        </form>
+      </section>
+
+      <section class="detail-section">
         <h4>Sales</h4>
         <div class="detail-metrics">
           <div class="metric"><span>Units sold</span><strong>${sales.units}</strong></div>
@@ -1957,6 +1990,8 @@ function renderPublishedDetail(item) {
   if (withdrawButton && item.status !== "withdrawn") {
     withdrawButton.addEventListener("click", () => withdrawPublishedListing(item.id));
   }
+  const promotionForm = $("#publishedPromotionForm");
+  if (promotionForm) promotionForm.addEventListener("submit", (event) => savePublishedPromotion(event, item.id));
 }
 
 function renderPublishedVariants(rows) {
@@ -2047,6 +2082,28 @@ async function withdrawPublishedListing(id) {
   } catch (error) {
     status.textContent = error.message;
     button.disabled = false;
+  }
+}
+
+async function savePublishedPromotion(event, id) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const status = $("#promotionPricingStatus");
+  const submit = form.querySelector("button[type=submit]");
+  const body = {
+    promotedListingEnabled: new FormData(form).has("promotedListingEnabled"),
+    promotedAdRatePercent: Number(form.elements.promotedAdRatePercent.value || 0)
+  };
+  submit.disabled = true;
+  status.textContent = "Saving promotion pricing...";
+  try {
+    const result = await api(`/api/published/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) });
+    const index = state.published.findIndex((item) => item.id === id);
+    if (index >= 0) state.published[index] = result.published;
+    renderPublished();
+  } catch (error) {
+    status.textContent = error.message;
+    submit.disabled = false;
   }
 }
 

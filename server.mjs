@@ -1998,15 +1998,49 @@ async function handleApi(req, res, url) {
       return;
     }
 
-    const publishedMatch = url.pathname.match(/^\/api\/published\/([^/]+)\/withdraw$/);
-    if (req.method === "POST" && publishedMatch) {
+    const publishedMatch = url.pathname.match(/^\/api\/published\/([^/]+)(?:\/(withdraw))?$/);
+    if (publishedMatch && (req.method === "PATCH" || req.method === "POST")) {
       const store = await readStore();
       const id = decodeURIComponent(publishedMatch[1]);
+      const action = publishedMatch[2] || "";
       const index = store.published.findIndex((listing) => listing.id === id);
       if (index === -1) {
         sendJson(res, 404, { error: "Published listing not found" });
         return;
       }
+
+      if (req.method === "PATCH" && !action) {
+        const body = await readBody(req);
+        const enabled = body.promotedListingEnabled === true;
+        const rate = Number(body.promotedAdRatePercent ?? 0);
+        if (!Number.isFinite(rate) || rate < 0 || rate >= 100) {
+          sendJson(res, 400, { error: "Enter a valid promoted listing ad rate below 100%." });
+          return;
+        }
+        const next = {
+          ...store.published[index],
+          promotedListingEnabled: enabled,
+          promotedAdRatePercent: enabled ? rate : 0,
+          updatedAt: new Date().toISOString()
+        };
+        if (next.multiVariation) {
+          next.listingVariants = (next.listingVariants || []).map((row) => ({
+            ...row,
+            promotedListingEnabled: enabled,
+            promotedAdRatePercent: enabled ? rate : 0
+          }));
+        }
+        store.published[index] = next;
+        await saveStore(store);
+        sendJson(res, 200, { published: next });
+        return;
+      }
+
+      if (!(req.method === "POST" && action === "withdraw")) {
+        sendJson(res, 404, { error: "Not found" });
+        return;
+      }
+
       try {
         const result = await withdrawPublishedFromEbay(store.published[index]);
         store.published[index] = {

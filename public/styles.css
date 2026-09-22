@@ -895,6 +895,23 @@ dd {
   margin: 0 0 12px;
 }
 
+.promotion-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(140px, 0.5fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.promotion-form input[type="number"] {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.promotion-form .inline-status {
+  grid-column: 1 / -1;
+}
+
 .detail-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1202,6 +1219,10 @@ pre {
   .published-detail-header,
   .published-actions {
     display: grid;
+  }
+
+  .promotion-form {
+    grid-template-columns: 1fr;
   }
 
   .detail-metrics {
