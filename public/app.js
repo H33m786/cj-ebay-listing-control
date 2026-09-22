@@ -565,6 +565,8 @@ function makeHostedDraft(product) {
     priceTargetType: "fixed",
     targetProfitGbp: 5,
     targetMarginPercent: 25,
+    promotedListingEnabled: false,
+    promotedAdRatePercent: 0,
     otherCostsGbp: 0,
     salePrice: price,
     handlingDays: product.deliveryDays > 10 ? 5 : 3,
@@ -995,6 +997,8 @@ function pricingBreakdownMarkup(draft) {
     ["Other costs", money(breakdown.otherCostsGbp)],
     ["Landed cost", money(pricing.landedCost)],
     ["Estimated eBay fees", money(pricing.estimatedFees)],
+    ["Promoted ad fee", money(pricing.promotedAdFee)],
+    ["Total fees", money(pricing.totalEstimatedFees)],
     ["Target", targetText],
     ["Calculated eBay price", target.price == null ? "Not calculated" : money(target.price)],
     ["Expected profit", money(pricing.margin)]
@@ -1287,6 +1291,8 @@ function renderEditor(draft) {
       <label>Target profit margin (%) <input name="targetMarginPercent" type="number" step="0.1" min="0.1" max="99.9" value="${draft.targetMarginPercent ?? 25}" /></label>
       <label>Sale price (GBP) <input name="salePrice" type="number" step="0.01" min="0" value="${draft.salePrice ?? ""}" /></label>
       <p class="wide inline-status" id="targetPriceStatus"></p>
+      <label class="wide pricing-confirmation"><input name="promotedListingEnabled" type="checkbox" ${draft.promotedListingEnabled === true ? "checked" : ""} /> Include promoted listing fee in pricing</label>
+      <label>Promoted ad rate (%) <input name="promotedAdRatePercent" type="number" step="0.1" min="0" max="99" value="${draft.promotedAdRatePercent ?? 0}" /></label>
       <label>Quantity <input name="quantity" type="number" min="0" value="${draft.quantity}" /></label>
       <label>Supplier cost currency <select name="costCurrency"><option value="USD" ${(draft.costCurrency || (String(draft.cjProductId).startsWith("CJ-") ? "GBP" : "USD")) === "USD" ? "selected" : ""}>USD</option><option value="GBP" ${(draft.costCurrency || (String(draft.cjProductId).startsWith("CJ-") ? "GBP" : "USD")) === "GBP" ? "selected" : ""}>GBP</option></select></label>
       <label>GBP per USD (including conversion charges) <input name="usdToGbp" type="number" step="0.0001" min="0" value="${draft.usdToGbp ?? ""}" /></label>
@@ -1663,7 +1669,7 @@ function supplierGalleryMarkup(draft) {
 function draftFormValues(form) {
   const formData = new FormData(form);
   const body = Object.fromEntries(formData.entries());
-  ["salePrice", "quantity", "cost", "shippingCost", "handlingDays", "deliveryDays", "usdToGbp", "feePercent", "feeFixed", "targetMarginPercent", "targetProfitGbp", "otherCostsGbp"].forEach((key) => {
+  ["salePrice", "quantity", "cost", "shippingCost", "handlingDays", "deliveryDays", "usdToGbp", "feePercent", "feeFixed", "targetMarginPercent", "targetProfitGbp", "promotedAdRatePercent", "otherCostsGbp"].forEach((key) => {
     body[key] = body[key] === "" ? null : Number(body[key]);
   });
   ["ebayCategorySearch", "ebayCategoryId", "ebayCategoryName"].forEach((key) => {
@@ -1694,6 +1700,7 @@ function draftFormValues(form) {
   }
   body.pricingReviewed = formData.has("pricingReviewed");
   body.autoPrice = formData.has("autoPrice");
+  body.promotedListingEnabled = formData.has("promotedListingEnabled");
   body.priceTargetType = body.priceTargetType === "percent" ? "percent" : "fixed";
   return body;
 }
@@ -1893,6 +1900,7 @@ function renderPublishedDetail(item) {
           <div class="metric"><span>Sale price</span><strong>${money(row.salePrice)}</strong></div>
           <div class="metric"><span>Landed cost</span><strong>${money(pricing.landedCost)}</strong></div>
           <div class="metric"><span>Estimated eBay fees</span><strong>${money(pricing.estimatedFees)}</strong></div>
+          <div class="metric"><span>Promoted ad fee</span><strong>${money(pricing.promotedAdFee)}</strong></div>
           <div class="metric"><span>Margin</span><strong>${money(pricing.margin)}</strong></div>
           <div class="metric"><span>Margin percent</span><strong>${pricing.marginPercent == null ? "Not calculated" : `${pricing.marginPercent}%`}</strong></div>
           <div class="metric"><span>Target</span><strong>${item.priceTargetType === "percent" ? `${item.targetMarginPercent ?? "Not set"}%` : `${money(item.targetProfitGbp ?? 5)} profit`}</strong></div>
@@ -1904,6 +1912,7 @@ function renderPublishedDetail(item) {
               <tr><th>CJ shipping</th><td>${money(row.shippingCost, row.costCurrency || "USD")}</td></tr>
               <tr><th>Conversion</th><td>${row.costCurrency === "GBP" ? "GBP costs" : `${row.usdToGbp || "Not set"} GBP per USD`}</td></tr>
               <tr><th>Other costs</th><td>${money(row.otherCostsGbp || 0)}</td></tr>
+              <tr><th>Promoted listing</th><td>${row.promotedListingEnabled ? `${row.promotedAdRatePercent || 0}% ad rate included in pricing` : "Not included"}</td></tr>
               <tr><th>Stock listed</th><td>${escapeHtml(row.quantity ?? item.quantity ?? "Not set")}</td></tr>
               <tr><th>Published</th><td>${item.publishedAt ? new Date(item.publishedAt).toLocaleString() : "Unknown"}</td></tr>
             </tbody>

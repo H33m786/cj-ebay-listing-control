@@ -19,6 +19,16 @@ test("target price can use a fixed GBP profit instead of a percentage margin", (
   assert.equal(pricing.breakdown.itemCostGbp, 7.46);
   assert.equal(pricing.breakdown.shippingCostGbp, 8.44);
 });
+test("promoted listing ad rate is included in target pricing", () => {
+  const normal = applyTargetPrice({ ...jacket, priceTargetType: "fixed", targetProfitGbp: 5, autoPrice: true });
+  const promoted = applyTargetPrice({ ...jacket, priceTargetType: "fixed", targetProfitGbp: 5, autoPrice: true, promotedListingEnabled: true, promotedAdRatePercent: 5 });
+  assert.ok(promoted.salePrice > normal.salePrice);
+  const pricing = draftPricing(promoted);
+  assert.ok(pricing.margin >= 5);
+  assert.equal(promoted.salePrice, 25.8);
+  assert.equal(pricing.promotedAdFee, 1.29);
+  assert.equal(pricing.totalEstimatedFees, 4.89);
+});
 test("target price recalculates costs and preserves manual mode", () => {
   const draft = { ...jacket, targetMarginPercent: 25, autoPrice: true };
   assert.ok(applyTargetPrice({ ...draft, shippingCost: 20 }).salePrice > applyTargetPrice(draft).salePrice);

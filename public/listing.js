@@ -17,6 +17,7 @@ export function listingRows(draft) {
     costCurrency: row.costCurrency || draft.costCurrency || "USD", autoPrice: draft.autoPrice, priceTargetType: draft.priceTargetType,
     targetMarginPercent: draft.targetMarginPercent, targetProfitGbp: draft.targetProfitGbp,
     feePercent: draft.feePercent, feeFixed: draft.feeFixed, usdToGbp: draft.usdToGbp,
+    promotedListingEnabled: draft.promotedListingEnabled, promotedAdRatePercent: draft.promotedAdRatePercent,
     otherCostsGbp: draft.otherCostsGbp,
     sku: ebaySku(draft.sku, row.cjVariantId || row.label),
     itemSpecifics: { ...aspectMap(draft.itemSpecifics), ...aspectMap(row.aspects) },

@@ -639,6 +639,8 @@ function makeDraftFromProduct(product) {
     priceTargetType: "fixed",
     targetProfitGbp: 5,
     targetMarginPercent: 25,
+    promotedListingEnabled: false,
+    promotedAdRatePercent: 0,
     otherCostsGbp: 0,
     salePrice: isSampleProduct(product) ? price : 0,
     handlingDays: product.deliveryDays > 10 ? 5 : 3,
