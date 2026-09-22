@@ -14,7 +14,9 @@ export function ebayErrorMessage(body, status) {
       const message = error.longMessage || error.message || "Request rejected";
       const code = error.errorId != null ? ` (eBay ${error.errorId})` : "";
       const fields = (error.inputRefIds || []).filter(Boolean);
-      return `${message}${code}${fields.length ? ` Fields: ${fields.join(", ")}.` : ""}`;
+      const parameters = (error.parameters || []).filter((parameter) => parameter?.name && parameter?.value != null);
+      const details = parameters.length ? ` Details: ${parameters.map((parameter) => `${parameter.name}=${parameter.value}`).join(", ")}.` : "";
+      return `${message}${code}${fields.length ? ` Fields: ${fields.join(", ")}.` : ""}${details}`;
     }).join(" ");
   }
   return body?.message || body?.error_description || body?.error || `eBay API failed with ${status}`;

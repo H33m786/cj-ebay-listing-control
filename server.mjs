@@ -1714,7 +1714,8 @@ async function getEbayAppToken() {
 }
 
 async function ebayApi(pathname, token, options = {}) {
-  const url = accountRequestUrl(pathname, ebayApiBaseUrl(), process.env.EBAY_MARKETPLACE_ID || "EBAY_GB", options.method || "GET");
+  const marketplaceId = ebayMarketplaceId();
+  const url = accountRequestUrl(pathname, ebayApiBaseUrl(), marketplaceId, options.method || "GET");
   const response = await fetch(url, {
     signal: AbortSignal.timeout(20000),
     method: options.method || "GET",
@@ -1723,7 +1724,8 @@ async function ebayApi(pathname, token, options = {}) {
       accept: "application/json",
       "accept-language": process.env.EBAY_LOCALE || "en-GB",
       "content-language": process.env.EBAY_LOCALE || "en-GB",
-      "content-type": "application/json"
+      "content-type": "application/json",
+      "x-ebay-c-marketplace-id": marketplaceId
     },
     body: options.body ? JSON.stringify(options.body) : undefined
   });
