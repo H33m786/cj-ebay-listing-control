@@ -2150,7 +2150,7 @@ function renderSalesGraph(days) {
 
 async function loadPublishedSales() {
   try {
-    const result = await api("/api/orders?days=90&offset=0");
+    const result = await api("/api/orders?days=30&offset=0");
     state.publishedSales = result;
     state.publishedSalesError = "";
   } catch (error) {

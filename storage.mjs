@@ -49,7 +49,7 @@ export async function createStorage(dataDir, connectionString) {
     },
     async writeFile(file, content) {
       if (!pool || !isDocument(file)) return writeLocalDocument(file, content);
-      await pool.query("INSERT INTO app_documents (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [path.basename(file), content]);
+      await pool.query("INSERT INTO app_documents (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [path.basename(file), JSON.stringify(JSON.parse(content))]);
     },
     async writeDocuments(documents) {
       if (!pool) {

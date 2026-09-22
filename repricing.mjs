@@ -143,7 +143,7 @@ export async function runTracking({ readStore, saveStore, connect, quote }, { sc
         async record(event) {
           if (event.status !== "updating") checked++;
           if (["failed", "held", "uncertain"].includes(event.status)) problems++;
-          listing.priceHistory = [{ ...event }, ...(listing.priceHistory || [])].slice(0, 200);
+          listing.priceHistory = [{ ...event }, ...(listing.priceHistory || [])].slice(0, 50);
           await saveStore(store);
         }
       });

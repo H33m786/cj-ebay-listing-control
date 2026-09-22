@@ -557,12 +557,58 @@ async function loadEnvFile(filePath) {
 
 async function readStore() {
   await ensureStore();
-  return JSON.parse(await readFile(storePath, "utf8"));
+  return compactStore(JSON.parse(await readFile(storePath, "utf8")));
 }
 
 async function saveStore(store) {
   await ensureStore();
-  await writeFile(storePath, JSON.stringify(store, null, 2));
+  await writeFile(storePath, JSON.stringify(compactStore(store)));
+}
+
+function compactStore(store = {}) {
+  return {
+    ...store,
+    drafts: (store.drafts || []).map(compactListing),
+    published: (store.published || []).map(compactListing)
+  };
+}
+
+function compactListing(listing = {}) {
+  const next = { ...listing };
+  if (Array.isArray(next.supplierImages)) next.supplierImages = next.supplierImages.filter(Boolean).slice(0, 12);
+  if (Array.isArray(next.priceHistory)) next.priceHistory = next.priceHistory.slice(0, 50).map(compactHistoryEntry);
+  if (Array.isArray(next.listingVariants)) {
+    next.listingVariants = next.listingVariants.map((row) => ({
+      ...row,
+      supplierImages: Array.isArray(row.supplierImages) ? row.supplierImages.filter(Boolean).slice(0, 6) : row.supplierImages
+    }));
+  }
+  if (Array.isArray(next.ebayPublishDetails)) next.ebayPublishDetails = next.ebayPublishDetails.slice(0, 20).map(({ sku, status, offerId, listingId, message }) => ({ sku, status, offerId, listingId, message }));
+  if (next.ebayPromotionAdResult) next.ebayPromotionAdResult = promotionResultSummary(next.ebayPromotionAdResult);
+  return next;
+}
+
+function compactHistoryEntry(entry = {}) {
+  const keep = {};
+  for (const key of ["at", "checkedAt", "sku", "variantId", "status", "message", "reason", "oldPrice", "price", "salePrice", "calculatedPrice", "confirmedPrice", "landedCost", "margin", "marginPercent", "promotedAdRatePercent", "priceUpdateMethod"]) {
+    if (entry[key] != null && entry[key] !== "") keep[key] = entry[key];
+  }
+  return keep;
+}
+
+function promotionResultSummary(result = {}) {
+  const responses = Array.isArray(result.responses) ? result.responses : [];
+  return {
+    responseCount: responses.length,
+    errors: responses.flatMap((response) => response.errors || []).slice(0, 5).map((error) => ({
+      errorId: error.errorId,
+      message: error.message || error.longMessage
+    })),
+    warnings: responses.flatMap((response) => response.warnings || []).slice(0, 5).map((warning) => ({
+      errorId: warning.errorId,
+      message: warning.message || warning.longMessage
+    }))
+  };
 }
 
 function mockProductById(id) {
@@ -1518,7 +1564,7 @@ async function applyPromotedListingPrices(listing) {
     const prices = (listing.listingVariants || []).filter((item) => item.enabled).map((item) => Number(item.salePrice)).filter(Number.isFinite);
     if (prices.length) listing.salePrice = Math.min(...prices);
   }
-  listing.priceHistory = [...updates, ...(listing.priceHistory || [])].slice(0, 200);
+  listing.priceHistory = [...updates, ...(listing.priceHistory || [])].slice(0, 50);
   return {
     status: updates.some((event) => event.status === "updated") ? "updated" : "unchanged",
     at: new Date().toISOString(),
