@@ -60,6 +60,26 @@ test("only the price field is sent; quantity is never reset", async () => {
   }, row, offer, 27.01);
   for (const response of [{}, { responses: [{ sku: "SKU", offerId: "offer", statusCode: 400 }] }]) await assert.rejects(updatePrice(async () => response, row, offer, 27.01));
 });
+
+test("price update can fall back when bulk revision fails", async () => {
+  let fallbackError = "";
+  await updatePrice(async () => {
+    throw new Error("bulk failed");
+  }, row, offer, 27.01, {
+    fallback: async (error) => {
+      fallbackError = error.message;
+    }
+  });
+  assert.equal(fallbackError, "bulk failed");
+
+  let fallbackFromResponse = "";
+  await updatePrice(async () => ({ responses: [{ sku: "SKU", offerId: "offer", statusCode: 400 }] }), row, offer, 27.01, {
+    fallback: async (error) => {
+      fallbackFromResponse = error.message;
+    }
+  });
+  assert.equal(fallbackFromResponse, "eBay did not confirm the bulk price update.");
+});
 test("paid or unknown postage blocks repricing", async () => {
   await checkFreePostage(async () => freePolicy, offer);
   await assert.rejects(checkFreePostage(async () => ({}), offer));

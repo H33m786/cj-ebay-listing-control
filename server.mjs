@@ -1485,7 +1485,20 @@ async function applyPromotedListingPrices(listing) {
       reason: "Promotion ad rate applied to eBay price"
     };
     if (Math.round(Number(oldPrice || 0) * 100) !== Math.round(target.price * 100)) {
-      await updatePrice(request, row, offer, target.price);
+      let priceUpdateMethod = "bulk";
+      await updatePrice(request, row, offer, target.price, {
+        fallback: async () => {
+          priceUpdateMethod = "offer";
+          await ebayApi(`/sell/inventory/v1/offer/${encodeURIComponent(offer.offerId)}`, token, {
+            method: "PUT",
+            body: ebayOfferPayload({
+              ...row,
+              salePrice: target.price,
+              quantity: row.quantity || offer.availableQuantity || listing.quantity
+            })
+          });
+        }
+      });
       const confirmed = await findLiveOffer(request, listing, row);
       const confirmedPrice = Number(confirmed.pricingSummary?.price?.value);
       event.confirmedPrice = Number.isFinite(confirmedPrice) ? confirmedPrice : null;
@@ -1493,6 +1506,7 @@ async function applyPromotedListingPrices(listing) {
         throw new Error(`eBay did not confirm the updated promoted price for ${row.sku}.`);
       }
       event.status = "updated";
+      event.priceUpdateMethod = priceUpdateMethod;
     } else {
       event.confirmedPrice = Number.isFinite(oldPrice) ? oldPrice : null;
     }

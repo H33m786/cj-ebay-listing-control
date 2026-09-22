@@ -53,10 +53,19 @@ export async function findLiveOffer(request, listing, row) {
   return matches[0];
 }
 
-export async function updatePrice(request, row, offer, price) {
-  const result = await request("/sell/inventory/v1/bulk_update_price_quantity", { method: "POST", body: { requests: [{ sku: row.sku, offers: [{ offerId: offer.offerId, price: { currency: "GBP", value: price.toFixed(2) } }] }] } });
+export async function updatePrice(request, row, offer, price, options = {}) {
+  let result;
+  try {
+    result = await request("/sell/inventory/v1/bulk_update_price_quantity", { method: "POST", body: { requests: [{ sku: row.sku, offers: [{ offerId: offer.offerId, price: { currency: "GBP", value: price.toFixed(2) } }] }] } });
+  } catch (error) {
+    if (typeof options.fallback === "function") return options.fallback(error);
+    throw error;
+  }
   const response = result.responses?.find((entry) => entry.sku === row.sku && entry.offerId === offer.offerId);
-  if (!response || !Number.isInteger(response.statusCode) || response.statusCode < 200 || response.statusCode >= 300 || response.errors?.length) throw new Error("eBay did not confirm the price update. Check the listing before retrying.");
+  if (!response || !Number.isInteger(response.statusCode) || response.statusCode < 200 || response.statusCode >= 300 || response.errors?.length) {
+    if (typeof options.fallback === "function") return options.fallback(new Error("eBay did not confirm the bulk price update."));
+    throw new Error("eBay did not confirm the price update. Check the listing before retrying.");
+  }
 }
 
 export function assertTrackingConnection(settings, connection, preview) {

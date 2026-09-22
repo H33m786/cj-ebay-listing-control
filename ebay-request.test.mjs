@@ -15,5 +15,6 @@ test("opt-in has no marketplace query while policy retrieval retains one", () =>
 test("errors preserve the actionable eBay code and detailed explanation", () => {
   assert.equal(ebayErrorMessage({ errors: [{ errorId: 20403, message: "Input error", longMessage: "User is not eligible", inputRefIds: [null] }] }, 400), "User is not eligible (eBay 20403)");
   assert.equal(ebayErrorMessage({ errors: [{ errorId: 145101, message: "Marketplace unsupported", parameters: [{ name: "marketplaceId", value: "EBAY_GB" }] }] }, 400), "Marketplace unsupported (eBay 145101) Details: marketplaceId=EBAY_GB.");
-  assert.equal(ebayErrorMessage({}, 500), "eBay API failed with 500");
+  assert.equal(ebayErrorMessage({ reason: "bad payload" }, 400), 'eBay API failed with 400. Response: {"reason":"bad payload"}');
+  assert.equal(ebayErrorMessage({}, 500), "eBay API failed with 500.");
 });

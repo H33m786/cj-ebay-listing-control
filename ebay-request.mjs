@@ -19,5 +19,6 @@ export function ebayErrorMessage(body, status) {
       return `${message}${code}${fields.length ? ` Fields: ${fields.join(", ")}.` : ""}${details}`;
     }).join(" ");
   }
-  return body?.message || body?.error_description || body?.error || `eBay API failed with ${status}`;
+  const raw = body && Object.keys(body).length ? ` Response: ${JSON.stringify(body).slice(0, 600)}` : "";
+  return body?.message || body?.error_description || body?.error || `eBay API failed with ${status}.${raw}`;
 }
