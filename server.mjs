@@ -47,6 +47,16 @@ const ebayScopes = [
 ];
 
 const ebayMarketingScope = "https://api.ebay.com/oauth/api_scope/sell.marketing";
+const promotedListingsTerms = {
+  EBAY_AU: "https://useragreement.ebay.com.au/usragmt/agreement/PROMOTED_LISTINGS_USER_AGREEMENT",
+  EBAY_CA: "https://useragreement.ebay.ca/usragmt/agreement/PROMOTED_LISTINGS_USER_AGREEMENT",
+  EBAY_FR: "https://useragreement.ebay.fr/usragmt/agreement/PROMOTED_LISTINGS_USER_AGREEMENT",
+  EBAY_DE: "https://useragreement.ebay.de/usragmt/agreement/PROMOTED_LISTINGS_USER_AGREEMENT",
+  EBAY_IT: "https://useragreement.ebay.it/usragmt/agreement/PROMOTED_LISTINGS_USER_AGREEMENT",
+  EBAY_ES: "https://useragreement.ebay.es/usragmt/agreement/PROMOTED_LISTINGS_USER_AGREEMENT",
+  EBAY_GB: "https://useragreement.ebay.co.uk/usragmt/agreement/PROMOTED_LISTINGS_USER_AGREEMENT",
+  EBAY_US: "https://useragreement.ebay.com/usragmt/agreement/PROMOTED_LISTINGS_USER_AGREEMENT"
+};
 
 const ebayAccountSetupPaths = {
   locations: "/sell/inventory/v1/location?limit=100",
@@ -1360,6 +1370,7 @@ function recommendedAdRateFromResponse(body, listingId) {
 async function promotionRecommendationForListing(listing) {
   const token = await getUsableEbayToken();
   assertMarketingReady(listing, token);
+  promotedListingsMarketplace();
   const listingId = promotionListingId(listing);
   const body = await ebayApi("/sell/recommendation/v1/find?filter=recommendationTypes:{AD}&limit=10", token, {
     method: "POST",
@@ -1371,6 +1382,7 @@ async function promotionRecommendationForListing(listing) {
 async function promotePublishedListingOnEbay(listing, adRatePercent) {
   const token = await getUsableEbayToken();
   assertMarketingReady(listing, token);
+  const marketplaceId = promotedListingsMarketplace();
   const listingId = promotionListingId(listing);
   const bidPercentage = validPromotionRate(adRatePercent);
   if (listing.ebayPromotionCampaignId && listing.ebayPromotionMode === ebayEnvironment()) {
@@ -1396,19 +1408,28 @@ async function promotePublishedListingOnEbay(listing, adRatePercent) {
     };
   }
   const campaignName = `CJ eBay ${listingId} ${new Date().toISOString().slice(0, 10)}`;
-  const campaign = await ebayApi("/sell/marketing/v1/ad_campaign", token, {
-    method: "POST",
-    includeHeaders: true,
-    body: {
-      marketplaceId: process.env.EBAY_MARKETPLACE_ID || "EBAY_GB",
-      campaignName,
-      fundingStrategy: {
-        fundingModel: "COST_PER_SALE",
-        bidPercentage: String(bidPercentage)
-      },
-      startDate: new Date(Date.now() + 60_000).toISOString()
+  let campaign;
+  try {
+    campaign = await ebayApi("/sell/marketing/v1/ad_campaign", token, {
+      method: "POST",
+      includeHeaders: true,
+      body: {
+        marketplaceId,
+        campaignName,
+        fundingStrategy: {
+          fundingModel: "COST_PER_SALE",
+          adRateStrategy: "FIXED",
+          bidPercentage: String(bidPercentage)
+        },
+        startDate: new Date(Date.now() + 60_000).toISOString()
+      }
+    });
+  } catch (error) {
+    if (/marketplace.*not supported|145101|35095/i.test(error.message)) {
+      throw new Error(`eBay rejected ${marketplaceId} for this promoted listing campaign. Check that Render has EBAY_MARKETPLACE_ID set to EBAY_GB, EBAY_ENV set to production, and that your seller account has accepted the UK Promoted Listings terms: ${promotedListingsTermsUrl(marketplaceId)}`);
     }
-  });
+    throw error;
+  }
   const campaignId = campaign.body?.campaignId || campaign.body?.campaign?.campaignId || campaignIdFromLocation(campaign.headers.location);
   if (!campaignId) throw new Error("eBay created the promotion campaign but did not return a campaign ID.");
   const adResult = await ebayApi(`/sell/marketing/v1/ad_campaign/${encodeURIComponent(campaignId)}/bulk_create_ads_by_listing_id`, token, {
@@ -1446,6 +1467,31 @@ function ebayTokenEndpoint() {
 
 function ebayApiBaseUrl() {
   return ebayEnvironment() === "production" ? "https://api.ebay.com" : "https://api.sandbox.ebay.com";
+}
+
+function ebayMarketplaceId() {
+  const raw = String(process.env.EBAY_MARKETPLACE_ID || "EBAY_GB").trim().toUpperCase();
+  const aliases = {
+    GB: "EBAY_GB",
+    UK: "EBAY_GB",
+    UNITED_KINGDOM: "EBAY_GB",
+    US: "EBAY_US",
+    USA: "EBAY_US",
+    UNITED_STATES: "EBAY_US"
+  };
+  return aliases[raw] || raw;
+}
+
+function promotedListingsMarketplace() {
+  const marketplaceId = ebayMarketplaceId();
+  if (!promotedListingsTerms[marketplaceId]) {
+    throw new Error(`Promoted Listings is not configured for marketplace ${marketplaceId}. Set EBAY_MARKETPLACE_ID to EBAY_GB for UK listings.`);
+  }
+  return marketplaceId;
+}
+
+function promotedListingsTermsUrl(marketplaceId = ebayMarketplaceId()) {
+  return promotedListingsTerms[marketplaceId] || promotedListingsTerms.EBAY_GB;
 }
 
 function marketplaceDeletionEndpoint() {
