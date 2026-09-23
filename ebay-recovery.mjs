@@ -31,6 +31,7 @@ export function recoveredListingCandidates(rows = [], { environment = "productio
     const listingId = first.listingId || "";
     const offerIds = unique(group.map((row) => row.offerId).filter(Boolean));
     const title = product.title || offer.listing?.title || offer.listingDescription || offer.sku || "Recovered eBay listing";
+    const fallbackImage = offer.listing?.imageUrl || offer.listing?.image?.imageUrl || "";
     const candidate = {
       id: recoveryCandidateId(environment, key),
       title,
@@ -42,8 +43,8 @@ export function recoveredListingCandidates(rows = [], { environment = "productio
       environment,
       salePrice: prices.length ? Math.min(...prices) : null,
       quantity: variants.reduce((sum, row) => sum + Number(row.quantity || 0), 0),
-      image: images[0] || "",
-      images,
+      image: images[0] || fallbackImage,
+      images: unique([...images, fallbackImage]),
       categoryId: offer.categoryId || "",
       categoryName: offer.categoryId ? `eBay category ${offer.categoryId}` : "Recovered from eBay",
       variants,
@@ -148,7 +149,7 @@ function offerRow(row, environment, marketplaceId) {
     label: label || row.originalSku || offer.sku || row.sku || "eBay SKU",
     quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
     salePrice: Number.isFinite(price) ? price : null,
-    image: product.imageUrls?.[0] || "",
+    image: product.imageUrls?.[0] || offer.listing?.imageUrl || offer.listing?.image?.imageUrl || "",
     ebayOfferId: row.offerId || offer.offerId || null,
     ebayListingId: row.listingId || offer.listing?.listingId || null,
     marketplaceId,

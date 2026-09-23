@@ -1918,7 +1918,7 @@ async function ebayRecoveryCandidates(store) {
   const details = [];
   for (const offer of offers) {
     let inventory = {};
-    if (offer.sku) {
+    if (isEbayInventorySku(offer.sku)) {
       try {
         inventory = await ebayApi(`/sell/inventory/v1/inventory_item/${encodeURIComponent(offer.sku)}`, token);
       } catch {
@@ -1932,6 +1932,10 @@ async function ebayRecoveryCandidates(store) {
     marketplaceId: ebayMarketplaceId(),
     existingPublished: store.published || []
   });
+}
+
+function isEbayInventorySku(value) {
+  return /^[a-z0-9]{1,50}$/i.test(String(value || ""));
 }
 
 async function saveOauthState(state) {
