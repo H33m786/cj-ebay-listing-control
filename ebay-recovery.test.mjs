@@ -42,3 +42,18 @@ test("mergeRecoveredListings imports selected candidates without duplicating exi
   assert.equal(merged[0].source, "ebay-recovered");
   assert.equal(merged[0].ebayOfferId, "offer-1");
 });
+
+test("recovered listings keep invalid eBay SKUs as metadata and create safe app SKUs", () => {
+  const candidates = recoveredListingCandidates([
+    {
+      offer: { offerId: "offer-1", sku: "custom label / home item", status: "PUBLISHED", listing: { listingId: "456" }, pricingSummary: { price: { value: "12", currency: "GBP" } } },
+      inventory: { product: { title: "Recovered Item", imageUrls: [], aspects: {} }, availability: { shipToLocationAvailability: { quantity: 1 } } }
+    }
+  ], { environment: "production", marketplaceId: "EBAY_GB" });
+
+  assert.equal(candidates[0].sku, "CUSTOMLABELHOMEITEM");
+  assert.equal(candidates[0].originalSku, "custom label / home item");
+  const merged = mergeRecoveredListings([], candidates, "2026-09-23T00:00:00.000Z");
+  assert.equal(merged[0].sku, "CUSTOMLABELHOMEITEM");
+  assert.equal(merged[0].ebayOriginalSku, "custom label / home item");
+});

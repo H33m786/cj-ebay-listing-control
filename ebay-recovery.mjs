@@ -10,13 +10,14 @@ export function recoveredListingCandidates(rows = [], { environment = "productio
   for (const row of rows) {
     const offer = row.offer || {};
     if (String(offer.status || "").toUpperCase() !== "PUBLISHED") continue;
-    const sku = String(offer.sku || row.sku || "").trim();
+    const originalSku = String(offer.sku || row.sku || "").trim();
     const listingId = String(offer.listing?.listingId || offer.listingId || "").trim();
     const offerId = String(offer.offerId || "").trim();
+    const sku = safeRecoveredSku(originalSku || offerId || listingId);
     const key = listingId || offerId || sku;
     if (!key) continue;
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push({ ...row, sku, listingId, offerId });
+    groups.get(key).push({ ...row, sku, originalSku, listingId, offerId });
   }
 
   return [...groups.entries()].map(([key, group]) => {
@@ -34,6 +35,7 @@ export function recoveredListingCandidates(rows = [], { environment = "productio
       id: recoveryCandidateId(environment, key),
       title,
       sku: variants[0]?.sku || first.sku || "",
+      originalSku: variants[0]?.ebayOriginalSku || first.originalSku || "",
       listingId,
       offerIds,
       marketplaceId,
@@ -87,7 +89,8 @@ export function recoveredPublishedRecord(candidate, existing = null, now = new D
     ebayOfferId: candidate.offerIds?.[0] || existing?.ebayOfferId || null,
     ebayOfferIds: candidate.offerIds || existing?.ebayOfferIds || [],
     ebayPublishVerified: true,
-    ebayPublishDetails: variants.map((row) => ({ sku: row.sku, status: "PUBLISHED", offerId: row.ebayOfferId, listingId: candidate.listingId })),
+    ebayOriginalSku: candidate.originalSku || existing?.ebayOriginalSku || "",
+    ebayPublishDetails: variants.map((row) => ({ sku: row.sku, originalSku: row.ebayOriginalSku, status: "PUBLISHED", offerId: row.ebayOfferId, listingId: candidate.listingId })),
     publishedMode: candidate.environment,
     publishedAt: existing?.publishedAt || now,
     updatedAt: now,
@@ -102,6 +105,7 @@ export function recoveredPublishedRecord(candidate, existing = null, now = new D
     base.listingVariants = variants.map((row) => ({
       ...row,
       enabled: true,
+      ebayOriginalSku: row.ebayOriginalSku || "",
       label: row.label || row.sku,
       aspects: row.aspects || { Option: row.label || row.sku },
       cost: existing?.cost ?? 0,
@@ -139,8 +143,9 @@ function offerRow(row, environment, marketplaceId) {
   const quantity = Number(inventory.availability?.shipToLocationAvailability?.quantity ?? offer.availableQuantity ?? 1);
   const label = product.aspects ? Object.values(product.aspects).flat().filter(Boolean).slice(0, 2).join(" / ") : "";
   return {
-    sku: row.sku || offer.sku || "",
-    label: label || row.sku || offer.sku || "eBay SKU",
+    sku: row.sku || safeRecoveredSku(offer.sku || offer.offerId || row.listingId || "RECOVERED"),
+    ebayOriginalSku: row.originalSku || offer.sku || "",
+    label: label || row.originalSku || offer.sku || row.sku || "eBay SKU",
     quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
     salePrice: Number.isFinite(price) ? price : null,
     image: product.imageUrls?.[0] || "",
@@ -159,6 +164,11 @@ function normalizeAspects(aspects = {}) {
 
 function recoveryCandidateId(environment, key) {
   return `recovered-${environment}-${String(key).replace(/[^a-z0-9]/gi, "").slice(0, 60)}`;
+}
+
+function safeRecoveredSku(value) {
+  const cleaned = String(value || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  return (cleaned || "RECOVERED").slice(0, 50);
 }
 
 function recordKey(listing = {}) {
