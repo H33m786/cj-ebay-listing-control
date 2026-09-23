@@ -3,6 +3,7 @@ import { publishingSetup } from "./ebay-setup.mjs";
 import { linkedEbayProfile, identityScope, refreshScopes } from "./ebay-profile.mjs";
 import { fetchOrders } from "./orders.mjs";
 import { dailyDue, trackingSettings, runTracking, assertTrackingConnection, findLiveOffer, updatePrice } from "./repricing.mjs";
+import { recoveredListingCandidates, mergeRecoveredListings } from "./ebay-recovery.mjs";
 import { readFile as readLocalFile, mkdir, stat } from "node:fs/promises";
 import { createStorage } from "./storage.mjs";
 import { createAccessGuard } from "./access.mjs";
@@ -1903,6 +1904,36 @@ async function checkEbayAccountSetup() {
   };
 }
 
+async function ebayRecoveryCandidates(store) {
+  const token = await getUsableEbayToken();
+  const offers = [];
+  const limit = 200;
+  for (let offset = 0; offset < 1000; offset += limit) {
+    const page = await ebayApi(`/sell/inventory/v1/offer?limit=${limit}&offset=${offset}`, token);
+    const rows = page.offers || [];
+    offers.push(...rows);
+    const total = Number(page.total || rows.length);
+    if (!rows.length || offers.length >= total) break;
+  }
+  const details = [];
+  for (const offer of offers) {
+    let inventory = {};
+    if (offer.sku) {
+      try {
+        inventory = await ebayApi(`/sell/inventory/v1/inventory_item/${encodeURIComponent(offer.sku)}`, token);
+      } catch {
+        inventory = {};
+      }
+    }
+    details.push({ offer, inventory, sku: offer.sku });
+  }
+  return recoveredListingCandidates(details, {
+    environment: ebayEnvironment(),
+    marketplaceId: ebayMarketplaceId(),
+    existingPublished: store.published || []
+  });
+}
+
 async function saveOauthState(state) {
   await mkdir(dataDir, { recursive: true });
   await writeFile(statePath, JSON.stringify({ state, createdAt: new Date().toISOString() }, null, 2));
@@ -2242,6 +2273,33 @@ async function handleApi(req, res, url) {
         sendJson(res, 400, { error: error.message });
       }
       return;
+    }
+
+    if (url.pathname === "/api/ebay/recover-listings") {
+      try {
+        const store = await readStore();
+        const candidates = await ebayRecoveryCandidates(store);
+        if (req.method === "GET") {
+          sendJson(res, 200, { candidates, environment: ebayEnvironment(), marketplaceId: ebayMarketplaceId() });
+          return;
+        }
+        if (req.method === "POST") {
+          const body = await readBody(req);
+          const selectedIds = new Set(Array.isArray(body.ids) ? body.ids.map(String) : []);
+          const selected = candidates.filter((candidate) => selectedIds.has(candidate.id));
+          if (!selected.length) {
+            sendJson(res, 400, { error: "Select at least one eBay listing to import." });
+            return;
+          }
+          store.published = mergeRecoveredListings(store.published || [], selected);
+          await saveStore(store);
+          sendJson(res, 200, { imported: selected.length, published: store.published, candidates });
+          return;
+        }
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+        return;
+      }
     }
 
     if (req.method === "POST" && url.pathname === "/api/ebay/opt-in-selling-policies") {

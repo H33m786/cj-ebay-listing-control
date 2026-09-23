@@ -11,6 +11,8 @@ const state = {
   products: [],
   drafts: [],
   published: [],
+  ebayRecovery: null,
+  ebayRecoveryError: "",
   research: null,
   selectedDraftId: null,
   selectedPublishedId: null,
@@ -1910,6 +1912,7 @@ function validateClient(draft) {
 function renderPublished() {
   const list = $("#publishedList");
   const detail = $("#publishedDetail");
+  renderEbayRecoveryPanel();
   if (!state.published.length) {
     list.innerHTML = '<div class="empty-state">Published listings will appear here after drafts pass checks.</div>';
     detail.innerHTML = '<div class="empty-state">Select a published listing to inspect pricing, sales, and eBay status.</div>';
@@ -1946,6 +1949,90 @@ function renderPublished() {
   });
 
   renderPublishedDetail(state.published.find((item) => item.id === state.selectedPublishedId));
+}
+
+function renderEbayRecoveryPanel() {
+  const panel = $("#ebayRecoveryPanel");
+  if (!panel) return;
+  const candidates = state.ebayRecovery?.candidates || [];
+  const available = candidates.filter((candidate) => !candidate.alreadyImported);
+  panel.innerHTML = `
+    <div class="section-heading">
+      <div>
+        <h3>Recover active eBay listings</h3>
+        <p>Use this if local storage is missing listings. Tick only the listings that belong in this CJ/eBay system.</p>
+      </div>
+      <button type="button" class="secondary" id="loadEbayRecoveryButton">${state.ebayRecovery ? "Refresh eBay listings" : "Find eBay listings"}</button>
+    </div>
+    ${state.ebayRecoveryError ? `<p class="inline-status">${escapeHtml(state.ebayRecoveryError)}</p>` : ""}
+    ${state.ebayRecovery ? `
+      <form id="ebayRecoveryForm" class="recovery-list">
+        <p class="meta">${available.length} importable listing${available.length === 1 ? "" : "s"} found from ${escapeHtml(state.ebayRecovery.environment || "eBay")}. Already imported items are shown disabled.</p>
+        ${candidates.length ? candidates.map((candidate) => recoveryCandidateMarkup(candidate)).join("") : '<p class="meta">No active published eBay inventory offers were found for this account.</p>'}
+        <div class="editor-actions">
+          <button type="submit" ${available.length ? "" : "disabled"}>Import selected</button>
+        </div>
+      </form>
+    ` : ""}
+  `;
+  $("#loadEbayRecoveryButton")?.addEventListener("click", loadEbayRecoveryListings);
+  $("#ebayRecoveryForm")?.addEventListener("submit", importSelectedEbayListings);
+}
+
+function recoveryCandidateMarkup(candidate) {
+  const disabled = candidate.alreadyImported ? "disabled" : "";
+  const checked = candidate.alreadyImported ? "" : "checked";
+  const variantText = candidate.multiVariation ? `${candidate.variants?.length || 0} variants` : candidate.sku || "Single SKU";
+  return `
+    <label class="recovery-row ${candidate.alreadyImported ? "is-disabled" : ""}">
+      <input type="checkbox" name="listing" value="${escapeAttr(candidate.id)}" ${checked} ${disabled} />
+      ${candidate.image ? `<img src="${escapeAttr(candidate.image)}" alt="" />` : '<span class="product-visual"><span>eBay</span></span>'}
+      <span>
+        <strong>${escapeHtml(candidate.title)}</strong>
+        <span class="meta">eBay ${escapeHtml(candidate.listingId || "No listing ID")} / ${escapeHtml(variantText)} / ${money(candidate.salePrice)}</span>
+        <span class="meta">${candidate.alreadyImported ? "Already in this app" : "Will be imported as a recovered published listing"}</span>
+      </span>
+    </label>
+  `;
+}
+
+async function loadEbayRecoveryListings() {
+  const button = $("#loadEbayRecoveryButton");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Checking eBay...";
+  }
+  state.ebayRecoveryError = "";
+  try {
+    state.ebayRecovery = await api("/api/ebay/recover-listings");
+  } catch (error) {
+    state.ebayRecoveryError = error.message;
+  }
+  renderPublished();
+}
+
+async function importSelectedEbayListings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const ids = [...form.querySelectorAll('input[name="listing"]:checked')].map((input) => input.value);
+  if (!ids.length) {
+    state.ebayRecoveryError = "Select at least one eBay listing to import.";
+    renderPublished();
+    return;
+  }
+  const submit = form.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  submit.textContent = "Importing...";
+  try {
+    const result = await api("/api/ebay/recover-listings", { method: "POST", body: JSON.stringify({ ids }) });
+    state.published = result.published || state.published;
+    state.ebayRecovery = { ...(state.ebayRecovery || {}), candidates: result.candidates || [] };
+    state.ebayRecoveryError = `Imported ${result.imported} listing${result.imported === 1 ? "" : "s"} from eBay.`;
+    renderCounts();
+  } catch (error) {
+    state.ebayRecoveryError = error.message;
+  }
+  renderPublished();
 }
 
 function mainPublishedRow(item) {
@@ -2033,6 +2120,7 @@ function renderPublishedDetail(item) {
               <tr><th>Promotion price update</th><td>${promotionPriceUpdateLabel(item)}</td></tr>
               <tr><th>Stock listed</th><td>${escapeHtml(row.quantity ?? item.quantity ?? "Not set")}</td></tr>
               <tr><th>Published</th><td>${item.publishedAt ? new Date(item.publishedAt).toLocaleString() : "Unknown"}</td></tr>
+              ${item.recoveryNote ? `<tr><th>Recovery note</th><td>${escapeHtml(item.recoveryNote)}</td></tr>` : ""}
             </tbody>
           </table>
         </div>

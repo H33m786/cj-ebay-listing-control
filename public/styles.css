@@ -48,6 +48,49 @@
 .tracking-history table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 .tracking-history th, .tracking-history td { text-align: left; border-bottom: 1px solid var(--line); padding: 12px 8px; min-width: 110px; max-width: 340px; overflow-wrap: anywhere; vertical-align: top; }
 @media (max-width: 700px) { .tracking-controls, .tracking-fields, .item-specifics { grid-template-columns: minmax(0, 1fr); gap: 12px; } }
+.recovery-panel {
+  grid-column: 1 / -1;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.recovery-list {
+  display: grid;
+  gap: 10px;
+}
+.recovery-row {
+  display: grid;
+  grid-template-columns: 22px 68px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+.recovery-row input[type=checkbox] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+.recovery-row img,
+.recovery-row .product-visual {
+  width: 68px;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.recovery-row strong,
+.recovery-row .meta {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.recovery-row.is-disabled {
+  opacity: 0.62;
+}
+@media (max-width: 700px) { .recovery-row { grid-template-columns: 22px 52px minmax(0, 1fr); } .recovery-row img, .recovery-row .product-visual { width: 52px; } }
 #ordersView button { min-height: 40px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
 #ordersView button:hover:not(:disabled) { border-color: var(--accent); }
 #ordersView button:disabled { opacity: 0.5; cursor: default; }
