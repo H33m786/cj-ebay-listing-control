@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { recoveredListingCandidates, mergeRecoveredListings } from "./ebay-recovery.mjs";
+import { recoveredListingCandidates, browseListingCandidates, mergeRecoveredListings } from "./ebay-recovery.mjs";
 
 test("recoveredListingCandidates groups published variation offers by listing id", () => {
   const candidates = recoveredListingCandidates([
@@ -56,4 +56,22 @@ test("recovered listings keep invalid eBay SKUs as metadata and create safe app 
   const merged = mergeRecoveredListings([], candidates, "2026-09-23T00:00:00.000Z");
   assert.equal(merged[0].sku, "CUSTOMLABELHOMEITEM");
   assert.equal(merged[0].ebayOriginalSku, "custom label / home item");
+});
+
+test("browseListingCandidates recovers production listing ids from Browse item ids", () => {
+  const candidates = browseListingCandidates([
+    {
+      itemId: "v1|407235002291|677409199203",
+      title: "Geometric Marble Phone Case",
+      price: { value: "17.03", currency: "GBP" },
+      image: { imageUrl: "https://example.com/case.jpg" },
+      seller: { username: "novagoods_1" }
+    }
+  ], { environment: "production", marketplaceId: "EBAY_GB" });
+
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].listingId, "407235002291");
+  assert.equal(candidates[0].sku, "407235002291");
+  assert.equal(candidates[0].recoverySource, "ebay-browse");
+  assert.match(candidates[0].recoveryNote, /public seller search/);
 });

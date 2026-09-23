@@ -55,12 +55,44 @@ export function recoveredListingCandidates(rows = [], { environment = "productio
   }).sort((a, b) => Number(a.alreadyImported) - Number(b.alreadyImported) || String(a.title).localeCompare(String(b.title)));
 }
 
+export function browseListingCandidates(items = [], { environment = "production", marketplaceId = "EBAY_GB", existingPublished = [] } = {}) {
+  const rows = items.map((item) => {
+    const listingId = browseListingId(item);
+    const image = item.image?.imageUrl || item.thumbnailImages?.[0]?.imageUrl || item.additionalImages?.[0]?.imageUrl || "";
+    return {
+      offer: {
+        offerId: "",
+        sku: listingId || item.itemId || item.title,
+        status: "PUBLISHED",
+        categoryId: item.categories?.[0]?.categoryId || "",
+        listing: { listingId, title: item.title, imageUrl: image },
+        pricingSummary: { price: item.price || item.currentBidPrice || {} }
+      },
+      inventory: {
+        product: {
+          title: item.title,
+          imageUrls: unique([image, ...(item.additionalImages || []).map((entry) => entry.imageUrl)]),
+          aspects: {}
+        },
+        availability: { shipToLocationAvailability: { quantity: 1 } }
+      },
+      sku: listingId || item.itemId || item.title,
+      browseItemId: item.itemId
+    };
+  });
+  return recoveredListingCandidates(rows, { environment, marketplaceId, existingPublished }).map((candidate) => ({
+    ...candidate,
+    recoverySource: "ebay-browse",
+    recoveryNote: "Recovered from eBay public seller search. eBay offer IDs and CJ details may need linking before withdraw or automated CJ repricing."
+  }));
+}
+
 export function recoveredPublishedRecord(candidate, existing = null, now = new Date().toISOString()) {
   const variants = candidate.variants || [];
   const base = {
     id: existing?.id || candidate.id,
     source: existing?.source || "ebay-recovered",
-    recoverySource: "ebay",
+    recoverySource: candidate.recoverySource || "ebay",
     recoveryImportedAt: existing?.recoveryImportedAt || now,
     title: candidate.title,
     sku: candidate.sku,
@@ -96,7 +128,7 @@ export function recoveredPublishedRecord(candidate, existing = null, now = new D
     publishedAt: existing?.publishedAt || now,
     updatedAt: now,
     recoveredNeedsCjLink: true,
-    recoveryNote: "Recovered from eBay. CJ product/variant and supplier costs may need to be reattached for automatic daily CJ price tracking.",
+    recoveryNote: candidate.recoveryNote || "Recovered from eBay. CJ product/variant and supplier costs may need to be reattached for automatic daily CJ price tracking.",
     priceHistory: existing?.priceHistory || []
   };
   if (variants.length > 1) {
@@ -165,6 +197,12 @@ function normalizeAspects(aspects = {}) {
 
 function recoveryCandidateId(environment, key) {
   return `recovered-${environment}-${String(key).replace(/[^a-z0-9]/gi, "").slice(0, 60)}`;
+}
+
+function browseListingId(item = {}) {
+  if (item.legacyItemId) return String(item.legacyItemId);
+  const parts = String(item.itemId || "").split("|");
+  return parts.length >= 2 && /^\d+$/.test(parts[1]) ? parts[1] : "";
 }
 
 function safeRecoveredSku(value) {

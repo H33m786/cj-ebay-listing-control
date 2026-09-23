@@ -3,7 +3,7 @@ import { publishingSetup } from "./ebay-setup.mjs";
 import { linkedEbayProfile, identityScope, refreshScopes } from "./ebay-profile.mjs";
 import { fetchOrders } from "./orders.mjs";
 import { dailyDue, trackingSettings, runTracking, assertTrackingConnection, findLiveOffer, updatePrice } from "./repricing.mjs";
-import { recoveredListingCandidates, mergeRecoveredListings } from "./ebay-recovery.mjs";
+import { recoveredListingCandidates, browseListingCandidates, mergeRecoveredListings } from "./ebay-recovery.mjs";
 import { readFile as readLocalFile, mkdir, stat } from "node:fs/promises";
 import { createStorage } from "./storage.mjs";
 import { createAccessGuard } from "./access.mjs";
@@ -1906,6 +1906,15 @@ async function checkEbayAccountSetup() {
 
 async function ebayRecoveryCandidates(store) {
   const token = await getUsableEbayToken();
+  try {
+    return await ebayInventoryRecoveryCandidates(store, token);
+  } catch (error) {
+    if (!/invalid value for a SKU|25707|API_INVENTORY/i.test(error.message)) throw error;
+    return await ebayBrowseRecoveryCandidates(store, token);
+  }
+}
+
+async function ebayInventoryRecoveryCandidates(store, token) {
   const offers = [];
   const limit = 200;
   for (let offset = 0; offset < 1000; offset += limit) {
@@ -1936,6 +1945,30 @@ async function ebayRecoveryCandidates(store) {
 
 function isEbayInventorySku(value) {
   return /^[a-z0-9]{1,50}$/i.test(String(value || ""));
+}
+
+async function ebayBrowseRecoveryCandidates(store, token) {
+  const profile = await linkedEbayProfile(ebayEnvironment(), async () => token);
+  const username = profile.username;
+  if (!username) throw new Error(profile.message || "Could not identify the linked eBay seller account for fallback recovery.");
+  const terms = ["1", "phone", "case", "jacket", "charger", "cable", "usb", "wireless", "coat", "mat", "yoga", "car", "gluten", "men", "women", "home"];
+  const byId = new Map();
+  for (const term of terms) {
+    const query = new URLSearchParams({
+      q: term,
+      limit: "50",
+      filter: `sellers:{${username}}`
+    });
+    const result = await ebayApi(`/buy/browse/v1/item_summary/search?${query}`, token);
+    for (const item of result.itemSummaries || []) {
+      if (item.itemId) byId.set(item.itemId, item);
+    }
+  }
+  return browseListingCandidates([...byId.values()], {
+    environment: ebayEnvironment(),
+    marketplaceId: ebayMarketplaceId(),
+    existingPublished: store.published || []
+  });
 }
 
 async function saveOauthState(state) {
