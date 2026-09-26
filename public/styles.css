@@ -314,12 +314,81 @@ textarea {
   gap: 16px;
 }
 
+.search-assist {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 16px;
+}
+
+.quick-searches {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.quick-searches button,
+.pager-actions button {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  min-height: 38px;
+  padding: 7px 11px;
+  font-weight: 800;
+}
+
+.quick-searches button:hover:not(:disabled),
+.pager-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.product-search-status {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
 .product-card {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
   box-shadow: var(--shadow);
+}
+
+.product-card-published {
+  border-color: rgba(22, 101, 52, 0.55);
+}
+
+.product-card-draft {
+  border-color: rgba(165, 104, 0, 0.55);
+}
+
+.listing-status {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  color: #ffffff;
+  background: var(--muted);
+  vertical-align: middle;
+}
+
+.listing-status-published {
+  background: var(--ok);
+}
+
+.listing-status-draft {
+  background: var(--warning);
+}
+
+.listing-status-possible {
+  background: #4f46e5;
 }
 
 .product-card img,
@@ -385,6 +454,23 @@ textarea {
 
 .product-body {
   padding: 14px;
+}
+
+.product-match-note {
+  margin: 8px 0 10px;
+}
+
+.pager-actions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.pager-actions span {
+  color: var(--muted);
+  font-weight: 800;
 }
 
 .meta {

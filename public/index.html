@@ -64,8 +64,27 @@
                 <option value="CN">CN</option>
               </select>
             </label>
+            <label>
+              Results
+              <select id="resultSizeInput" name="size">
+                <option value="40">40</option>
+                <option value="60" selected>60</option>
+                <option value="100">100</option>
+              </select>
+            </label>
             <button type="submit">Search CJ</button>
           </form>
+          <div class="search-assist">
+            <div class="quick-searches" id="quickSearches" aria-label="Quick CJ searches">
+              <button type="button" data-keyword="phone case">Phone cases</button>
+              <button type="button" data-keyword="usb charger">Chargers</button>
+              <button type="button" data-keyword="jacket">Jackets</button>
+              <button type="button" data-keyword="led lamp">LED lamps</button>
+              <button type="button" data-keyword="yoga mat">Fitness</button>
+              <button type="button" data-keyword="car accessories">Car accessories</button>
+            </div>
+            <div class="product-search-status" id="productSearchStatus"></div>
+          </div>
           <div class="category-chips" id="categoryChips" aria-label="Browse categories">
             <button type="button" class="category-chip active" data-category="">All</button>
             <button type="button" class="category-chip" data-category="trending">Trending</button>
@@ -76,6 +95,7 @@
             <button type="button" class="category-chip" data-category="travel">Travel</button>
           </div>
           <div class="product-grid" id="productGrid"></div>
+          <div class="pager-actions" id="productPager"></div>
         </section>
 
         <section class="view" id="researchView">

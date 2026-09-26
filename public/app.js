@@ -9,6 +9,8 @@ const repricingView = createRepricingView(document.querySelector("#repricingView
 
 const state = {
   products: [],
+  productPage: 1,
+  productMeta: { page: 1, size: 60, total: null, live: false },
   drafts: [],
   published: [],
   ebayRecovery: null,
@@ -868,6 +870,8 @@ function renderCounts() {
 
 function renderProducts() {
   const grid = $("#productGrid");
+  renderProductSearchStatus();
+  renderProductPager();
   grid.innerHTML = "";
   if (!state.products.length) {
     grid.innerHTML = '<div class="empty-state">No CJ products matched this search.</div>';
@@ -878,8 +882,10 @@ function renderProducts() {
   state.products.forEach((product) => {
     const node = template.content.cloneNode(true);
     const card = node.querySelector(".product-card");
+    const status = productListingStatus(product);
+    if (status.level) card.classList.add(`product-card-${status.level}`);
     card.querySelector(".product-media").innerHTML = productVisual(product);
-    card.querySelector(".meta").textContent = `${product.category || product.categoryName || "Unmapped"} / ${product.warehouse || "CJ"}`;
+    card.querySelector(".meta").innerHTML = `${escapeHtml(product.category || product.categoryName || "Unmapped")} / ${escapeHtml(product.warehouse || "CJ")}${status.label ? ` <span class="listing-status listing-status-${escapeAttr(status.level)}">${escapeHtml(status.label)}</span>` : ""}`;
     card.querySelector("h3").textContent = product.title || product.productNameEn || "Untitled CJ product";
     card.querySelector("dl").innerHTML = `
       <div><dt>Cost</dt><dd>${money(product.cost, String(product.pid).startsWith("CJ-") ? "GBP" : "USD")}</dd></div>
@@ -887,7 +893,13 @@ function renderProducts() {
       <div><dt>Stock</dt><dd>${product.stock ?? "Check"}</dd></div>
       <div><dt>Delivery</dt><dd>${product.deliveryDays ?? "Check"} days</dd></div>
     `;
-    card.querySelector("button").addEventListener("click", async () => {
+    if (status.detail) card.querySelector("dl").insertAdjacentHTML("afterend", `<p class="inline-status product-match-note">${escapeHtml(status.detail)}</p>`);
+    const button = card.querySelector("button");
+    if (status.level === "published") {
+      button.textContent = "Create another draft";
+      button.classList.add("secondary");
+    }
+    button.addEventListener("click", async () => {
       const result = await api("/api/drafts", {
         method: "POST",
         body: JSON.stringify({ product })
@@ -900,6 +912,86 @@ function renderProducts() {
     });
     grid.appendChild(node);
   });
+}
+
+function renderProductSearchStatus() {
+  const status = $("#productSearchStatus");
+  if (!status) return;
+  const meta = state.productMeta || {};
+  const totalText = meta.total ? ` of ${meta.total}` : "";
+  status.textContent = `${state.products.length}${totalText} CJ result${state.products.length === 1 ? "" : "s"} shown / page ${meta.page || state.productPage || 1}${meta.live ? " / live CJ" : " / samples"}`;
+}
+
+function renderProductPager() {
+  const pager = $("#productPager");
+  if (!pager) return;
+  const meta = state.productMeta || {};
+  const page = Number(meta.page || state.productPage || 1);
+  const size = Number(meta.size || $("#resultSizeInput")?.value || 60);
+  const hasPrevious = page > 1;
+  const hasNext = state.products.length >= size && (!meta.total || page * size < meta.total);
+  pager.innerHTML = `
+    <button type="button" id="previousProductPage" ${hasPrevious ? "" : "disabled"}>Previous</button>
+    <span>Page ${page}</span>
+    <button type="button" id="nextProductPage" ${hasNext ? "" : "disabled"}>Next</button>
+  `;
+  $("#previousProductPage")?.addEventListener("click", async () => {
+    state.productPage = Math.max(1, page - 1);
+    await loadProducts();
+  });
+  $("#nextProductPage")?.addEventListener("click", async () => {
+    state.productPage = page + 1;
+    await loadProducts();
+  });
+}
+
+function productListingStatus(product) {
+  const pid = String(product.pid || product.cjProductId || product.productId || "").trim();
+  const sku = String(product.sku || product.productSku || "").trim();
+  const title = String(product.title || product.productNameEn || "").trim();
+  const published = state.published.find((item) => productMatchesListing(product, item, { allowTitle: false }));
+  if (published) {
+    return { level: "published", label: "Already on eBay", detail: `${published.title || "Published listing"}${published.ebayListingId ? ` / eBay ${published.ebayListingId}` : ""}` };
+  }
+  const draft = state.drafts.find((item) => productMatchesListing(product, item, { allowTitle: false }));
+  if (draft) return { level: "draft", label: "Draft exists", detail: draft.title || "This CJ product is already in Drafts." };
+  const possible = state.published.find((item) => productMatchesListing(product, item, { allowTitle: true }));
+  if (possible && title.length > 20) return { level: "possible", label: "Possible match", detail: `Similar title in Published: ${possible.title}` };
+  if (pid || sku) return { level: "", label: "", detail: "" };
+  return { level: "", label: "", detail: "" };
+}
+
+function productMatchesListing(product, listing, { allowTitle = false } = {}) {
+  const productIds = new Set([
+    product.pid,
+    product.cjProductId,
+    product.productId,
+    product.id,
+    product.sku,
+    product.productSku
+  ].map((value) => String(value || "").trim()).filter(Boolean));
+  const listingIds = new Set([
+    listing.cjProductId,
+    listing.productId,
+    listing.pid,
+    listing.sku,
+    ...(listing.listingVariants || []).flatMap((row) => [row.cjProductId, row.sku])
+  ].map((value) => String(value || "").trim()).filter(Boolean));
+  if ([...productIds].some((value) => listingIds.has(value))) return true;
+  if (!allowTitle) return false;
+  return titleSimilarity(product.title || product.productNameEn, listing.title) >= 0.62;
+}
+
+function titleSimilarity(left, right) {
+  const a = titleWords(left);
+  const b = new Set(titleWords(right));
+  if (a.length < 3 || b.size < 3) return 0;
+  return a.filter((word) => b.has(word)).length / Math.min(a.length, b.size);
+}
+
+function titleWords(value) {
+  const stop = new Set(["with", "for", "and", "the", "new", "from", "type", "plus"]);
+  return String(value || "").toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2 && !stop.has(word)).slice(0, 12);
 }
 
 async function loadResearch() {
@@ -2638,12 +2730,18 @@ function escapeAttr(value = "") {
   return escapeHtml(value).replaceAll("'", "&#039;");
 }
 
-async function loadProducts() {
+async function loadProducts({ resetPage = false } = {}) {
+  if (resetPage) state.productPage = 1;
   const keyword = encodeURIComponent($("#keywordInput").value);
   const category = encodeURIComponent($("#categoryInput").value);
   const warehouse = encodeURIComponent($("#warehouseInput").value);
-  const result = await api(`/api/products?keyword=${keyword}&category=${category}&warehouse=${warehouse}`);
-  state.products = result.products;
+  const size = encodeURIComponent($("#resultSizeInput")?.value || 60);
+  const page = encodeURIComponent(state.productPage || 1);
+  $("#productSearchStatus").textContent = "Searching CJ...";
+  const result = await api(`/api/products?keyword=${keyword}&category=${category}&warehouse=${warehouse}&page=${page}&size=${size}`);
+  state.products = result.products || [];
+  state.productMeta = { page: result.page || state.productPage || 1, size: result.size || Number(size), total: result.total || null, live: result.live === true };
+  state.productPage = state.productMeta.page;
   renderProducts();
 }
 
@@ -2665,7 +2763,7 @@ document.querySelectorAll(".nav-tab").forEach((button) => {
 
 $("#searchForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  await loadProducts();
+  await loadProducts({ resetPage: true });
 });
 
 $("#researchForm").addEventListener("submit", async (event) => {
@@ -2675,14 +2773,29 @@ $("#researchForm").addEventListener("submit", async (event) => {
 
 $("#categoryInput").addEventListener("change", async () => {
   syncCategoryChips();
-  await loadProducts();
+  await loadProducts({ resetPage: true });
+});
+
+$("#warehouseInput").addEventListener("change", async () => {
+  await loadProducts({ resetPage: true });
+});
+
+$("#resultSizeInput").addEventListener("change", async () => {
+  await loadProducts({ resetPage: true });
 });
 
 document.querySelectorAll(".category-chip").forEach((button) => {
   button.addEventListener("click", async () => {
     $("#categoryInput").value = button.dataset.category;
     syncCategoryChips();
-    await loadProducts();
+    await loadProducts({ resetPage: true });
+  });
+});
+
+document.querySelectorAll("#quickSearches [data-keyword]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    $("#keywordInput").value = button.dataset.keyword;
+    await loadProducts({ resetPage: true });
   });
 });
 

@@ -891,12 +891,14 @@ async function fetchCjProducts(url) {
   const keyword = url.searchParams.get("keyword")?.trim().toLowerCase() || "";
   const category = url.searchParams.get("category") || "";
   const warehouse = url.searchParams.get("warehouse") || "";
+  const page = Math.max(1, Number(url.searchParams.get("page") || 1));
+  const size = Math.min(100, Math.max(10, Number(url.searchParams.get("size") || 40)));
 
   if (process.env.CJ_USE_LIVE === "true") {
     const cjAccessToken = await getUsableCjToken();
     const cjUrl = new URL("https://developers.cjdropshipping.com/api2.0/v1/product/listV2");
-    cjUrl.searchParams.set("page", "1");
-    cjUrl.searchParams.set("size", "20");
+    cjUrl.searchParams.set("page", String(page));
+    cjUrl.searchParams.set("size", String(size));
     if (keyword || category) cjUrl.searchParams.set("keyWord", keyword || category);
     const response = await fetch(cjUrl, {
       headers: { "CJ-Access-Token": cjAccessToken }
@@ -904,16 +906,17 @@ async function fetchCjProducts(url) {
     if (!response.ok) throw new Error(`CJ API failed with ${response.status}`);
     const body = await response.json();
     const products = cjProductListFromResponse(body.data);
-    return { live: true, products: products.map(normalizeCjProduct) };
+    return { live: true, page, size, total: cjProductTotalFromResponse(body.data), products: products.map(normalizeCjProduct) };
   }
 
-  const products = mockProducts.filter((product) => {
+  const filtered = mockProducts.filter((product) => {
     const keywordMatch = matchesProduct(product, keyword);
     const categoryMatch = matchesCategory(product, category);
     const warehouseMatch = !warehouse || product.warehouse === warehouse;
     return keywordMatch && categoryMatch && warehouseMatch;
   });
-  return { live: false, products };
+  const start = (page - 1) * size;
+  return { live: false, page, size, total: filtered.length, products: filtered.slice(start, start + size) };
 }
 
 const researchSeeds = {
@@ -1066,6 +1069,10 @@ function cjProductListFromResponse(data) {
   }
   if (Array.isArray(data?.productList)) return data.productList;
   return [];
+}
+
+function cjProductTotalFromResponse(data) {
+  return Number(data?.total || data?.totalCount || data?.count || data?.pagination?.total || 0) || null;
 }
 
 function imageUrlList(...values) {
