@@ -2,6 +2,7 @@ import { draftPricing, targetSalePrice, applyTargetPrice } from "./pricing.js";
 import { listingRows, mainListingRowIndex, variationErrors, categoryErrors, alignVariationAxesToSchema, collapseSingleVariation } from "./listing.js";
 import { buildDraftDescription } from "./description.js";
 import { compareDraftToMarket, marketSearchTerm, prePublishChecklist } from "./market.js";
+import { riskyTermsForDraft, saferRiskWording } from "./risk-terms.js";
 import { createOrdersView } from "./orders.js";
 const ordersView = createOrdersView(document.querySelector("#ordersView"));
 import { createRepricingView } from "./repricing.js";
@@ -1183,6 +1184,36 @@ function pricingBreakdownMarkup(draft) {
   `;
 }
 
+function riskTermReviewMarkup(draft) {
+  const suggestion = saferRiskWording(draft);
+  if (!suggestion.hasRisk) return "";
+  return `
+    <section class="validation-box fail risk-review" id="riskTermReview">
+      <strong>Risk term review</strong>
+      <p class="meta">Found blocked/risky wording: ${escapeHtml(suggestion.terms.join(", "))}. Review the safer omission before applying it.</p>
+      <div class="risk-review-grid">
+        <article>
+          <span>Current title</span>
+          <p>${escapeHtml(draft.title || "")}</p>
+        </article>
+        <article>
+          <span>Suggested title</span>
+          <p>${escapeHtml(suggestion.title || "")}</p>
+        </article>
+        <article>
+          <span>Current description</span>
+          <p>${escapeHtml(String(draft.description || "").slice(0, 360))}${String(draft.description || "").length > 360 ? "..." : ""}</p>
+        </article>
+        <article>
+          <span>Suggested description</span>
+          <p>${escapeHtml(String(suggestion.description || "").slice(0, 360))}${String(suggestion.description || "").length > 360 ? "..." : ""}</p>
+        </article>
+      </div>
+      <button type="button" class="secondary" id="applyRiskTermSuggestion" ${suggestion.changed ? "" : "disabled"}>Apply safer wording</button>
+    </section>
+  `;
+}
+
 function checklistItemsMarkup(checklist) {
   return `
     <div class="quality-list">
@@ -1478,6 +1509,7 @@ function renderEditor(draft) {
       ${supplierGalleryMarkup(draft)}
     </div>
     ${validationMarkup(validation)}
+    ${riskTermReviewMarkup(draft)}
     ${pricingBreakdownMarkup(draft)}
     ${marketCheckMarkup(null, draft)}
     <div class="editor-actions">
@@ -1806,6 +1838,21 @@ function renderEditor(draft) {
       button.textContent = "Auto-complete draft";
     }
   });
+  editor.querySelector("#applyRiskTermSuggestion")?.addEventListener("click", async () => {
+    const suggestion = saferRiskWording({ ...draft, ...draftFormValues(editor) });
+    editor.elements.title.value = suggestion.title;
+    editor.elements.ebayCategorySearch.value = suggestion.title;
+    editor.elements.description.value = suggestion.description;
+    try {
+      await saveDraftSilently(draft.id, draftFormValues(editor));
+      const latest = await api("/api/drafts");
+      state.drafts = latest.drafts || [];
+      renderDrafts();
+      showEditorStatus($("#draftEditor"), "Safer wording applied", "Review the updated title and description, then run checks again before publishing.");
+    } catch (error) {
+      showEditorError(editor, error.message);
+    }
+  });
   $("#marketCheckButton").addEventListener("click", async () => {
     const button = $("#marketCheckButton");
     button.disabled = true;
@@ -2032,6 +2079,8 @@ function validateClient(draft) {
   if (draft.priceTargetType === "percent" && marginPercent < Number(draft.targetMarginPercent ?? 15)) warnings.push("Margin is below the target.");
   if ((draft.priceTargetType || "fixed") !== "percent" && margin < Number(draft.targetProfitGbp ?? 5)) warnings.push("Profit is below the target.");
   if (draft.deliveryDays > 10) warnings.push("Delivery estimate is slow for eBay buyers.");
+  const foundBlocked = riskyTermsForDraft(draft);
+  if (foundBlocked.length) failures.push(`Blocked brand/risk terms found: ${foundBlocked.join(", ")}.`);
   return { passed: failures.length === 0, failures: [...new Set(failures)], warnings, landedCost: landed, estimatedFees: fees, margin, marginPercent };
 }
 

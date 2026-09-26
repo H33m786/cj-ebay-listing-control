@@ -14,6 +14,7 @@ import { optimizeDraft } from "./public/optimizer.js";
 import { normalizeQuotes } from "./cj-quotes.mjs";
 import { listingRows, mainListingRowIndex, prepareListing, variationErrors, inventoryPayload, inventoryGroup, aspectMap, categoryErrors, alignVariationAxesToSchema, collapseSingleVariation } from "./public/listing.js";
 import { buildDraftDescription, buildEbayListingDescription } from "./public/description.js";
+import { riskyTermsForDraft } from "./public/risk-terms.js";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -781,9 +782,7 @@ function validateDraft(draft) {
 
   const pricing = draftPricing(draft);
   const { landedCost: landed, estimatedFees: fees, margin, marginPercent } = pricing;
-  const text = `${draft.title} ${draft.description}`.toLowerCase();
-  const blockedTerms = ["nike", "adidas", "apple", "dyson", "stanley", "lego", "disney", "dupe", "replica"];
-  const foundBlocked = blockedTerms.filter((term) => text.includes(term));
+  const foundBlocked = riskyTermsForDraft(draft);
   const warnings = [];
   const failures = [...pricing.failures];
   if (!/^\d+$/.test(draft.ebayCategoryId || "")) failures.push("Choose an eBay category.");
