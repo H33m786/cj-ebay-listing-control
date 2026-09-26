@@ -1647,12 +1647,12 @@ function renderEditor(draft) {
     editor.querySelector("#quoteVariantsButton").addEventListener("click", async () => {
       editor.elements.multiVariation.checked = true;
       let rows = readRows();
-      const quotable = rows.filter((row) => row.cjVariantId);
+      const currentDraft = () => ({ ...draft, ...draftFormValues(editor), multiVariation: true });
+      const quotable = rows.map((row, index) => ({ row, index })).filter(({ row }) => row.cjVariantId);
       if (!quotable.length) { status.textContent = "No CJ variants found to quote."; return; }
       status.textContent = `Pricing 0/${quotable.length} variants...`;
       let completed = 0;
-      for (const row of rows) {
-        if (!row.cjVariantId) continue;
+      const priceVariant = async ({ row }) => {
         try {
           const response = await fetch("/api/cj/price-quote", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pid: draft.cjProductId, vid: row.cjVariantId, postcode: editor.elements.quotePostcode?.value || "" }) });
           const result = await response.json();
@@ -1665,17 +1665,26 @@ function renderEditor(draft) {
           row.costCurrency = result.currency || "USD";
           row.shippingCost = quote ? quote.price : null;
           row.cjShippingService = quote?.name || "";
-          row.quoteError = "";
+          const price = targetSalePrice({ ...currentDraft(), ...row, multiVariation: false }).price;
+          row.salePrice = price ?? null;
+          row.quoteError = quote ? "" : result.shippingError || "CJ returned no shipping option for this variant.";
         } catch (error) {
           row.quoteError = error.message;
+          row.salePrice = null;
         }
         completed += 1;
         status.textContent = `Pricing ${completed}/${quotable.length} variants...`;
         writeRows(rows, { refresh: false });
+      };
+      for (let start = 0; start < quotable.length; start += 4) {
+        await Promise.allSettled(quotable.slice(start, start + 4).map(priceVariant));
       }
       writeRows(rows);
       const priced = rows.filter((row) => Number.isFinite(Number(row.salePrice)) && !row.quoteError).length;
-      status.textContent = `${priced}/${quotable.length} variant prices calculated. Tick the variants you want to publish, then confirm shared shipping.`;
+      const failed = quotable.length - priced;
+      status.textContent = failed
+        ? `${priced}/${quotable.length} variant prices calculated. ${failed} need a manual shipping quote or CJ returned no route.`
+        : `${priced}/${quotable.length} variant prices calculated. Tick the variants you want to publish, then confirm shared shipping.`;
     });
     writeRows(readRows());
   }
