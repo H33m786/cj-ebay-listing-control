@@ -1344,10 +1344,10 @@ function variationsMarkup(draft) {
       <input type="hidden" name="listingVariantsJson" value="${escapeAttr(JSON.stringify(rows))}" />
       <div class="variation-toolbar">
         <button type="button" class="secondary" id="selectCommonVariantsButton">Select common sizes</button>
-        <button type="button" class="secondary" id="quoteVariantsButton">Refresh selected variant quotes</button>
+        <button type="button" class="secondary" id="quoteVariantsButton">Calculate all variant prices</button>
         <span id="variationStatus">${enabledCount ? `${enabledCount} selected` : "No variants selected"}</span>
       </div>
-      <p class="variation-help">Tick the variants you want to sell. Cost and shipping are the CJ amounts for that exact colour/size; the app uses them to calculate the eBay sale price and margin.</p>
+      <p class="variation-help">Calculate all variant prices first, then tick only the variants you want to sell. Cost and shipping are the CJ amounts for that exact colour/size; the app uses them to calculate the eBay sale price and margin.</p>
       <div class="variation-table">
         <div class="variation-row variation-row-head" aria-hidden="true">
           <span>Use</span>
@@ -1647,12 +1647,12 @@ function renderEditor(draft) {
     editor.querySelector("#quoteVariantsButton").addEventListener("click", async () => {
       editor.elements.multiVariation.checked = true;
       let rows = readRows();
-      const selected = rows.filter((row) => row.enabled);
-      if (!selected.length) { status.textContent = "Select at least two variants first."; return; }
-      status.textContent = `Quoting 0/${selected.length} variants...`;
+      const quotable = rows.filter((row) => row.cjVariantId);
+      if (!quotable.length) { status.textContent = "No CJ variants found to quote."; return; }
+      status.textContent = `Pricing 0/${quotable.length} variants...`;
       let completed = 0;
       for (const row of rows) {
-        if (!row.enabled) continue;
+        if (!row.cjVariantId) continue;
         try {
           const response = await fetch("/api/cj/price-quote", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pid: draft.cjProductId, vid: row.cjVariantId, postcode: editor.elements.quotePostcode?.value || "" }) });
           const result = await response.json();
@@ -1665,18 +1665,17 @@ function renderEditor(draft) {
           row.costCurrency = result.currency || "USD";
           row.shippingCost = quote ? quote.price : null;
           row.cjShippingService = quote?.name || "";
-          row.enabled = Boolean(quote);
           row.quoteError = "";
         } catch (error) {
-          row.enabled = false;
           row.quoteError = error.message;
         }
         completed += 1;
-        status.textContent = `Quoting ${completed}/${selected.length} variants...`;
+        status.textContent = `Pricing ${completed}/${quotable.length} variants...`;
         writeRows(rows, { refresh: false });
       }
       writeRows(rows);
-      status.textContent = "Variant quotes refreshed. Review prices and tick the shared shipping confirmation.";
+      const priced = rows.filter((row) => Number.isFinite(Number(row.salePrice)) && !row.quoteError).length;
+      status.textContent = `${priced}/${quotable.length} variant prices calculated. Tick the variants you want to publish, then confirm shared shipping.`;
     });
     writeRows(readRows());
   }
