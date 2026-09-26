@@ -1650,46 +1650,57 @@ function renderEditor(draft) {
       const currentDraft = () => ({ ...draft, ...draftFormValues(editor), multiVariation: true });
       const quotable = rows.map((row, index) => ({ row, index })).filter(({ row }) => row.cjVariantId);
       if (!quotable.length) { status.textContent = "No CJ variants found to quote."; return; }
-      status.textContent = `Asking CJ for ${quotable.length} variant prices. This may take a minute if CJ slows us down...`;
-      try {
-        const response = await fetch("/api/cj/variant-price-quotes", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ pid: draft.cjProductId, vids: quotable.map(({ row }) => row.cjVariantId), postcode: editor.elements.quotePostcode?.value || "" })
-        });
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error || "CJ quote failed.");
-        const results = new Map((body.results || []).map((result) => [result.variantId, result]));
-        for (const { row } of quotable) {
-          const result = results.get(row.cjVariantId);
-          if (!result || result.error) {
-            row.quoteError = result?.error || "CJ did not return a quote for this variant.";
-            row.salePrice = null;
-            continue;
+      const maxCycles = 6;
+      const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      let pending = quotable;
+      for (let cycle = 1; cycle <= maxCycles && pending.length; cycle += 1) {
+        status.textContent = `Pricing cycle ${cycle}/${maxCycles}: checking ${pending.length} variant${pending.length === 1 ? "" : "s"} without a price...`;
+        try {
+          const response = await fetch("/api/cj/variant-price-quotes", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ pid: draft.cjProductId, vids: pending.map(({ row }) => row.cjVariantId), postcode: editor.elements.quotePostcode?.value || "" })
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "CJ quote failed.");
+          const results = new Map((body.results || []).map((result) => [result.variantId, result]));
+          for (const { row } of pending) {
+            const result = results.get(row.cjVariantId);
+            if (!result || result.error) {
+              row.quoteError = result?.error || "CJ did not return a quote for this variant.";
+              row.salePrice = null;
+              continue;
+            }
+            const quotes = result.quotes || [];
+            const quote = quotes.find((item) => item.name === row.cjShippingService)
+              || quotes.find((item) => /yunexpress ordinary|cjpacket ordinary|luwei ordinary/i.test(item.name))
+              || quotes.slice().sort((a, b) => Number(a.price) - Number(b.price))[0];
+            row.cost = result.cost;
+            row.costCurrency = result.currency || "USD";
+            row.shippingCost = quote ? quote.price : null;
+            row.cjShippingService = quote?.name || "";
+            const price = targetSalePrice({ ...currentDraft(), ...row, multiVariation: false }).price;
+            row.salePrice = price ?? null;
+            row.quoteError = quote ? "" : result.shippingError || "CJ returned no shipping option for this variant.";
           }
-          const quotes = result.quotes || [];
-          const quote = quotes.find((item) => item.name === row.cjShippingService)
-            || quotes.find((item) => /yunexpress ordinary|cjpacket ordinary|luwei ordinary/i.test(item.name))
-            || quotes.slice().sort((a, b) => Number(a.price) - Number(b.price))[0];
-          row.cost = result.cost;
-          row.costCurrency = result.currency || "USD";
-          row.shippingCost = quote ? quote.price : null;
-          row.cjShippingService = quote?.name || "";
-          const price = targetSalePrice({ ...currentDraft(), ...row, multiVariation: false }).price;
-          row.salePrice = price ?? null;
-          row.quoteError = quote ? "" : result.shippingError || "CJ returned no shipping option for this variant.";
+        } catch (error) {
+          for (const { row } of pending) {
+            row.quoteError = error.message;
+            row.salePrice = null;
+          }
         }
-      } catch (error) {
-        for (const { row } of quotable) {
-          row.quoteError = error.message;
-          row.salePrice = null;
+        writeRows(rows, { refresh: false });
+        pending = quotable.filter(({ row }) => !Number.isFinite(Number(row.salePrice)));
+        if (pending.length && cycle < maxCycles) {
+          status.textContent = `${pending.length} variant${pending.length === 1 ? "" : "s"} still missing a price. Waiting before the next CJ cycle...`;
+          await delay(2500);
         }
       }
       writeRows(rows);
       const priced = rows.filter((row) => Number.isFinite(Number(row.salePrice)) && !row.quoteError).length;
       const failed = quotable.length - priced;
       status.textContent = failed
-        ? `${priced}/${quotable.length} variant prices calculated. ${failed} need a manual shipping quote or CJ returned no route.`
+        ? `${priced}/${quotable.length} variant prices calculated. Stopped with ${failed} still missing after ${maxCycles} cycles.`
         : `${priced}/${quotable.length} variant prices calculated. Tick the variants you want to publish, then confirm shared shipping.`;
     });
     writeRows(readRows());
