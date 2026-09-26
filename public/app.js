@@ -26,6 +26,27 @@ const state = {
 };
 
 const hostedStoreKey = "cj-ebay-listing-control-store";
+const themeStoreKey = "cj-ebay-theme";
+
+function preferredTheme() {
+  const saved = localStorage.getItem(themeStoreKey);
+  if (saved === "dark" || saved === "light") return saved;
+  return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
+}
+
+function applyTheme(theme) {
+  const next = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem(themeStoreKey, next);
+  const toggle = document.querySelector("#themeToggle");
+  if (toggle) {
+    toggle.textContent = next === "dark" ? "Light mode" : "Dark mode";
+    toggle.setAttribute("aria-pressed", String(next === "dark"));
+  }
+}
+
+applyTheme(preferredTheme());
+
 const sampleProducts = [
   {
     pid: "CJ-BAG-0042",
@@ -2890,6 +2911,9 @@ function syncCategoryChips() {
 }
 
 $("#refreshButton").addEventListener("click", () => $("#ordersView").classList.contains("active") ? ordersView.load() : $("#repricingView").classList.contains("active") ? repricingView.load() : $("#researchView").classList.contains("active") ? loadResearch() : loadAll());
+$("#themeToggle")?.addEventListener("click", () => {
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+});
 
 loadAll().catch((error) => {
   $("#productGrid").innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
