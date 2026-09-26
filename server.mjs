@@ -907,10 +907,12 @@ async function fetchCjProducts(url) {
     const cjAccessToken = await getUsableCjToken();
     const terms = liveCjSearchTerms(keyword, category);
     if (terms.length > 1) {
-      const batches = await Promise.all(terms.map((term) => fetchCjProductPage(cjAccessToken, { keyword: term, page: 1, size: Math.max(20, Math.ceil(size / Math.min(terms.length, 4))) })));
-      const products = uniqueCjProducts(batches.flatMap((batch) => batch.products)).map(normalizeCjProduct);
+      const batches = await Promise.allSettled(terms.map((term) => fetchCjProductPage(cjAccessToken, { keyword: term, page: 1, size: Math.max(20, Math.ceil(size / Math.min(terms.length, 4))) })));
+      const fulfilled = batches.filter((batch) => batch.status === "fulfilled").map((batch) => batch.value);
+      if (!fulfilled.length) throw new Error("CJ did not return products for this category. Try a specific search such as charger, phone case, or cable.");
+      const products = uniqueCjProducts(fulfilled.flatMap((batch) => batch.products)).map(normalizeCjProduct);
       const start = (page - 1) * size;
-      return { live: true, page, size, total: products.length, searchTerms: terms, products: products.slice(start, start + size) };
+      return { live: true, page, size, total: products.length, searchTerms: terms, failedSearches: batches.filter((batch) => batch.status === "rejected").length, products: products.slice(start, start + size) };
     }
     const batch = await fetchCjProductPage(cjAccessToken, { keyword: terms[0] || "", page, size });
     return { live: true, page, size, total: batch.total, searchTerms: terms, products: batch.products.map(normalizeCjProduct) };
@@ -932,6 +934,7 @@ async function fetchCjProductPage(cjAccessToken, { keyword = "", page = 1, size 
   cjUrl.searchParams.set("size", String(size));
   if (keyword) cjUrl.searchParams.set("keyWord", keyword);
   const response = await fetch(cjUrl, {
+    signal: AbortSignal.timeout(12000),
     headers: { "CJ-Access-Token": cjAccessToken }
   });
   if (!response.ok) throw new Error(`CJ API failed with ${response.status}`);
