@@ -532,6 +532,15 @@ const categoryAliases = {
   travel: ["travel", "luggage", "bag", "bags", "organiser", "organizer"]
 };
 
+const categorySearchSeeds = {
+  trending: ["wireless charger", "phone case", "winter jacket", "led desk lamp", "car accessories", "yoga mat"],
+  fashion: ["mens jacket", "winter coat", "crossbody bag", "phone bag", "beanie hat", "tote bag"],
+  electronics: ["usb c charger", "phone case", "charging cable", "wireless charger", "usb adapter", "led desk lamp", "power bank", "phone holder"],
+  home: ["storage rack", "kitchen organiser", "led lamp", "bathroom storage", "silicone mat", "desk organiser"],
+  fitness: ["resistance bands", "yoga mat", "fitness strap", "gym bag", "exercise band"],
+  travel: ["travel organiser", "packing cubes", "crossbody bag", "luggage tag", "cable organiser"]
+};
+
 async function ensureStore() {
   if (process.env.DATABASE_URL) return;
   await mkdir(dataDir, { recursive: true });
@@ -896,17 +905,15 @@ async function fetchCjProducts(url) {
 
   if (process.env.CJ_USE_LIVE === "true") {
     const cjAccessToken = await getUsableCjToken();
-    const cjUrl = new URL("https://developers.cjdropshipping.com/api2.0/v1/product/listV2");
-    cjUrl.searchParams.set("page", String(page));
-    cjUrl.searchParams.set("size", String(size));
-    if (keyword || category) cjUrl.searchParams.set("keyWord", keyword || category);
-    const response = await fetch(cjUrl, {
-      headers: { "CJ-Access-Token": cjAccessToken }
-    });
-    if (!response.ok) throw new Error(`CJ API failed with ${response.status}`);
-    const body = await response.json();
-    const products = cjProductListFromResponse(body.data);
-    return { live: true, page, size, total: cjProductTotalFromResponse(body.data), products: products.map(normalizeCjProduct) };
+    const terms = liveCjSearchTerms(keyword, category);
+    if (terms.length > 1) {
+      const batches = await Promise.all(terms.map((term) => fetchCjProductPage(cjAccessToken, { keyword: term, page: 1, size: Math.max(20, Math.ceil(size / Math.min(terms.length, 4))) })));
+      const products = uniqueCjProducts(batches.flatMap((batch) => batch.products)).map(normalizeCjProduct);
+      const start = (page - 1) * size;
+      return { live: true, page, size, total: products.length, searchTerms: terms, products: products.slice(start, start + size) };
+    }
+    const batch = await fetchCjProductPage(cjAccessToken, { keyword: terms[0] || "", page, size });
+    return { live: true, page, size, total: batch.total, searchTerms: terms, products: batch.products.map(normalizeCjProduct) };
   }
 
   const filtered = mockProducts.filter((product) => {
@@ -917,6 +924,37 @@ async function fetchCjProducts(url) {
   });
   const start = (page - 1) * size;
   return { live: false, page, size, total: filtered.length, products: filtered.slice(start, start + size) };
+}
+
+async function fetchCjProductPage(cjAccessToken, { keyword = "", page = 1, size = 40 } = {}) {
+  const cjUrl = new URL("https://developers.cjdropshipping.com/api2.0/v1/product/listV2");
+  cjUrl.searchParams.set("page", String(page));
+  cjUrl.searchParams.set("size", String(size));
+  if (keyword) cjUrl.searchParams.set("keyWord", keyword);
+  const response = await fetch(cjUrl, {
+    headers: { "CJ-Access-Token": cjAccessToken }
+  });
+  if (!response.ok) throw new Error(`CJ API failed with ${response.status}`);
+  const body = await response.json();
+  return { products: cjProductListFromResponse(body.data), total: cjProductTotalFromResponse(body.data) };
+}
+
+function liveCjSearchTerms(keyword, category) {
+  if (keyword) return [keyword];
+  if (categorySearchSeeds[category]) return categorySearchSeeds[category];
+  return category ? [category] : [""];
+}
+
+function uniqueCjProducts(products = []) {
+  const seen = new Set();
+  const output = [];
+  for (const product of products) {
+    const key = String(product.pid || product.productId || product.cjProductId || product.id || product.sku || product.productSku || product.productNameEn || "").trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(product);
+  }
+  return output;
 }
 
 const researchSeeds = {

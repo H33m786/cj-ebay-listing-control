@@ -919,7 +919,8 @@ function renderProductSearchStatus() {
   if (!status) return;
   const meta = state.productMeta || {};
   const totalText = meta.total ? ` of ${meta.total}` : "";
-  status.textContent = `${state.products.length}${totalText} CJ result${state.products.length === 1 ? "" : "s"} shown / page ${meta.page || state.productPage || 1}${meta.live ? " / live CJ" : " / samples"}`;
+  const termsText = meta.searchTerms?.length > 1 ? ` / ${meta.searchTerms.length} searches combined` : "";
+  status.textContent = `${state.products.length}${totalText} CJ result${state.products.length === 1 ? "" : "s"} shown / page ${meta.page || state.productPage || 1}${meta.live ? " / live CJ" : " / samples"}${termsText}`;
 }
 
 function renderProductPager() {
@@ -2740,7 +2741,7 @@ async function loadProducts({ resetPage = false } = {}) {
   $("#productSearchStatus").textContent = "Searching CJ...";
   const result = await api(`/api/products?keyword=${keyword}&category=${category}&warehouse=${warehouse}&page=${page}&size=${size}`);
   state.products = result.products || [];
-  state.productMeta = { page: result.page || state.productPage || 1, size: result.size || Number(size), total: result.total || null, live: result.live === true };
+  state.productMeta = { page: result.page || state.productPage || 1, size: result.size || Number(size), total: result.total || null, live: result.live === true, searchTerms: result.searchTerms || [] };
   state.productPage = state.productMeta.page;
   renderProducts();
 }
