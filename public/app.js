@@ -1650,13 +1650,23 @@ function renderEditor(draft) {
       const currentDraft = () => ({ ...draft, ...draftFormValues(editor), multiVariation: true });
       const quotable = rows.map((row, index) => ({ row, index })).filter(({ row }) => row.cjVariantId);
       if (!quotable.length) { status.textContent = "No CJ variants found to quote."; return; }
-      status.textContent = `Pricing 0/${quotable.length} variants...`;
-      let completed = 0;
-      const priceVariant = async ({ row }) => {
-        try {
-          const response = await fetch("/api/cj/price-quote", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pid: draft.cjProductId, vid: row.cjVariantId, postcode: editor.elements.quotePostcode?.value || "" }) });
-          const result = await response.json();
-          if (!response.ok) throw new Error(result.error || "CJ quote failed.");
+      status.textContent = `Asking CJ for ${quotable.length} variant prices. This may take a minute if CJ slows us down...`;
+      try {
+        const response = await fetch("/api/cj/variant-price-quotes", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ pid: draft.cjProductId, vids: quotable.map(({ row }) => row.cjVariantId), postcode: editor.elements.quotePostcode?.value || "" })
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "CJ quote failed.");
+        const results = new Map((body.results || []).map((result) => [result.variantId, result]));
+        for (const { row } of quotable) {
+          const result = results.get(row.cjVariantId);
+          if (!result || result.error) {
+            row.quoteError = result?.error || "CJ did not return a quote for this variant.";
+            row.salePrice = null;
+            continue;
+          }
           const quotes = result.quotes || [];
           const quote = quotes.find((item) => item.name === row.cjShippingService)
             || quotes.find((item) => /yunexpress ordinary|cjpacket ordinary|luwei ordinary/i.test(item.name))
@@ -1668,16 +1678,12 @@ function renderEditor(draft) {
           const price = targetSalePrice({ ...currentDraft(), ...row, multiVariation: false }).price;
           row.salePrice = price ?? null;
           row.quoteError = quote ? "" : result.shippingError || "CJ returned no shipping option for this variant.";
-        } catch (error) {
+        }
+      } catch (error) {
+        for (const { row } of quotable) {
           row.quoteError = error.message;
           row.salePrice = null;
         }
-        completed += 1;
-        status.textContent = `Pricing ${completed}/${quotable.length} variants...`;
-        writeRows(rows, { refresh: false });
-      };
-      for (let start = 0; start < quotable.length; start += 4) {
-        await Promise.allSettled(quotable.slice(start, start + 4).map(priceVariant));
       }
       writeRows(rows);
       const priced = rows.filter((row) => Number.isFinite(Number(row.salePrice)) && !row.quoteError).length;

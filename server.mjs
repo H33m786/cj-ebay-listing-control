@@ -2208,19 +2208,66 @@ function escapeHtml(value = "") {
 async function cjPriceQuote(input) {
   if (!input.pid || !input.vid) throw new Error("Select a CJ variant first.");
   const token = await getUsableCjToken();
-  const detailResponse = await fetch(`https://developers.cjdropshipping.com/api2.0/v1/product/query?pid=${encodeURIComponent(input.pid)}`, { headers: { "CJ-Access-Token": token }, signal: AbortSignal.timeout(20000) });
-  const detail = await detailResponse.json();
-  if (!detailResponse.ok || detail.code !== 200) throw new Error(detail.message || "CJ product lookup failed.");
+  const detail = await cjProductDetail(input.pid, token);
   const variant = (detail.data?.variants || []).find((item) => item.vid === input.vid);
+  return cjQuoteVariant(input, token, variant);
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function cjRateLimited(response, data) {
+  const message = String(data?.message || data?.error || "");
+  return response.status === 429 || /too many requests|rate limit|too frequent|frequent request/i.test(message);
+}
+
+async function cjApiJson(url, options = {}, { attempts = 4, timeoutMs = 20000 } = {}) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const response = await fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data.code === 200) return data;
+    const message = data.message || data.error || `CJ API failed with ${response.status}`;
+    lastError = new Error(message);
+    if (attempt < attempts - 1 && cjRateLimited(response, data)) {
+      await wait(1500 * (attempt + 1));
+      continue;
+    }
+    throw lastError;
+  }
+  throw lastError || new Error("CJ API failed.");
+}
+
+async function cjProductDetail(pid, token) {
+  return cjApiJson(`https://developers.cjdropshipping.com/api2.0/v1/product/query?pid=${encodeURIComponent(pid)}`, {
+    headers: { "CJ-Access-Token": token }
+  });
+}
+
+async function cjQuoteVariant(input, token, variant) {
   if (!variant || variant.variantSellPrice == null || variant.variantSellPrice === "" || !Number.isFinite(Number(variant.variantSellPrice))) throw new Error("CJ did not return a price for this variant.");
-  const freightResponse = await fetch("https://developers.cjdropshipping.com/api2.0/v1/logistic/freightCalculate", {
-    method: "POST", signal: AbortSignal.timeout(20000),
+  const freight = await cjApiJson("https://developers.cjdropshipping.com/api2.0/v1/logistic/freightCalculate", {
+    method: "POST",
     headers: { "CJ-Access-Token": token, "content-type": "application/json" },
     body: JSON.stringify({ startCountryCode: "CN", endCountryCode: "GB", ...(input.postcode ? { zip: String(input.postcode).trim() } : {}), products: [{ vid: variant.vid, quantity: 1 }] })
-  });
-  const freight = await freightResponse.json();
-  const shippingError = !freightResponse.ok || freight.code !== 200 ? freight.message || "CJ shipping quote failed." : null;
-  return { cost: Number(variant.variantSellPrice), currency: "USD", variantId: variant.vid, quotes: shippingError ? [] : normalizeQuotes(freight.data), shippingError, origin: "CN", destination: "GB", quantity: 1, quotedAt: new Date().toISOString() };
+  }, { attempts: 5 });
+  return { cost: Number(variant.variantSellPrice), currency: "USD", variantId: variant.vid, quotes: normalizeQuotes(freight.data), shippingError: null, origin: "CN", destination: "GB", quantity: 1, quotedAt: new Date().toISOString() };
+}
+
+async function cjVariantPriceQuotes(input) {
+  if (!input.pid || !Array.isArray(input.vids) || !input.vids.length) throw new Error("Select CJ variants first.");
+  const token = await getUsableCjToken();
+  const detail = await cjProductDetail(input.pid, token);
+  const variants = new Map((detail.data?.variants || []).map((variant) => [variant.vid, variant]));
+  const results = [];
+  for (const vid of [...new Set(input.vids.map(String).filter(Boolean))]) {
+    try {
+      results.push(await cjQuoteVariant({ ...input, vid }, token, variants.get(vid)));
+    } catch (error) {
+      results.push({ variantId: vid, error: error.message, quotes: [], shippingError: error.message, quotedAt: new Date().toISOString() });
+    }
+    await wait(650);
+  }
+  return { results, count: results.length, quotedAt: new Date().toISOString() };
 }
 
 let repricingQueued = false;
@@ -2282,6 +2329,10 @@ async function handleApi(req, res, url) {
 
     if (req.method === "POST" && url.pathname === "/api/cj/price-quote") {
       sendJson(res, 200, await cjPriceQuote(await readBody(req)));
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/cj/variant-price-quotes") {
+      sendJson(res, 200, await cjVariantPriceQuotes(await readBody(req)));
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/ebay/locations/cj-jinhua") {
