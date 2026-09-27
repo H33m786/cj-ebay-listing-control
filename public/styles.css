@@ -1248,13 +1248,19 @@ dd {
   stroke-linejoin: round;
 }
 
-.stats-line-graph .line.views,
+.stats-line-graph .line.views {
+  stroke: var(--accent);
+}
+
 .stats-line-graph .dot.views {
   stroke: var(--accent);
   fill: var(--accent);
 }
 
-.stats-line-graph .line.units,
+.stats-line-graph .line.units {
+  stroke: var(--warning);
+}
+
 .stats-line-graph .dot.units {
   stroke: var(--warning);
   fill: var(--warning);
