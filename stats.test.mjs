@@ -58,6 +58,21 @@ test("buildStats keeps sales when analytics traffic is unavailable", async () =>
   assert.match(result.warnings.join(" "), /Views unavailable/);
 });
 
+test("buildStats only counts paid non-cancelled orders as sales", async () => {
+  const unpaid = { ...order, orderId: "order-unpaid", orderPaymentStatus: "PENDING" };
+  const cancelled = { ...order, orderId: "order-cancelled", cancelStatus: { cancelState: "CANCEL_REQUESTED" } };
+  const result = await buildStats(new URLSearchParams({ days: "7" }), async (path) => {
+    if (path.startsWith("/sell/fulfillment")) return { orders: [unpaid, cancelled], total: 2 };
+    return traffic([]);
+  }, published, "production", "EBAY_GB", new Date("2026-09-27T12:00:00.000Z"));
+
+  const day = result.days.find((item) => item.date === "2026-09-26");
+  assert.equal(day.units, 0);
+  assert.equal(day.revenue, 0);
+  assert.equal(result.totals.orders, 0);
+  assert.equal(result.totals.units, 0);
+});
+
 test("buildStats can run since the first published listing", async () => {
   const result = await buildStats(new URLSearchParams({ days: "all" }), async (path) => {
     if (path.startsWith("/sell/fulfillment")) return { orders: [], total: 0 };

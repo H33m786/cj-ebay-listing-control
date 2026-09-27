@@ -35,6 +35,10 @@ function amountValue(amount) {
   return Number.isFinite(value) ? value : 0;
 }
 
+function isConfirmedSale(order) {
+  return order.payment === "PAID" && (!order.cancellation || order.cancellation === "NONE_REQUESTED");
+}
+
 function addItem(day, listing, patch) {
   let item = day.items.find((entry) => entry.listingId === listing.listingId);
   if (!item) {
@@ -116,8 +120,9 @@ export async function buildStats(params, request, published = [], environment = 
 
   try {
     const orders = await allOrders(daysRequested, request, published, environment, now);
-    totals.orders = orders.length;
-    for (const order of orders) {
+    const confirmedOrders = orders.filter(isConfirmedSale);
+    totals.orders = confirmedOrders.length;
+    for (const order of confirmedOrders) {
       const day = dayByKey.get(String(order.createdAt || "").slice(0, 10));
       if (!day) continue;
       for (const line of order.items || []) {
