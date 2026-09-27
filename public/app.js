@@ -21,6 +21,9 @@ const state = {
   selectedPublishedId: null,
   publishedSales: null,
   publishedSalesError: "",
+  stats: null,
+  statsError: "",
+  statsDays: 14,
   settings: null,
   ebayAccountSetup: null
 };
@@ -513,6 +516,7 @@ const demoImageGalleries = {
 const viewCopy = {
   orders: ["Fulfilment", "eBay orders"],
   repricing: ["Pricing", "Price tracking"],
+  stats: ["Performance", "Views and sales"],
   research: ["Market research", "Find product opportunities"],
   import: ["Supplier search", "Import CJ products"],
   drafts: ["Listing review", "Prepare eBay drafts"],
@@ -877,6 +881,7 @@ function setView(name) {
   else repricingView.clear();
   if (name === "orders") ordersView.load();
   else ordersView.clear();
+  if (name === "stats") loadStats();
   document.querySelectorAll(".nav-tab").forEach((button) => button.classList.toggle("active", button.dataset.view === name));
   document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
   $(`#${name}View`).classList.add("active");
@@ -2460,6 +2465,78 @@ function renderSalesGraph(days) {
   `;
 }
 
+function renderStats() {
+  const root = $("#statsView");
+  const stats = state.stats;
+  if (!stats && state.statsError) {
+    root.innerHTML = `<section class="validation-box fail"><strong>Stats unavailable</strong><p class="meta">${escapeHtml(state.statsError)}</p></section>`;
+    return;
+  }
+  const totals = stats?.totals || { views: 0, impressions: 0, units: 0, revenue: 0, orders: 0 };
+  const days = stats?.days || [];
+  const maxViews = Math.max(1, ...days.map((day) => Number(day.views || 0)));
+  const maxUnits = Math.max(1, ...days.map((day) => Number(day.units || 0)));
+  root.innerHTML = `
+    <form class="toolbar stats-toolbar" id="statsFilters">
+      <label>Stats range
+        <select name="days">
+          ${[7, 14, 30, 90].map((days) => `<option value="${days}" ${Number(state.statsDays) === days ? "selected" : ""}>Last ${days} days</option>`).join("")}
+        </select>
+      </label>
+      <button type="submit">Refresh stats</button>
+    </form>
+    ${stats?.warnings?.length ? `<section class="validation-box fail"><strong>Stats notes</strong><ul>${stats.warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>` : ""}
+    <section class="stats-summary">
+      <div class="metric"><span>Views</span><strong>${escapeHtml(String(totals.views || 0))}</strong></div>
+      <div class="metric"><span>Impressions</span><strong>${escapeHtml(String(totals.impressions || 0))}</strong></div>
+      <div class="metric"><span>Units sold</span><strong>${escapeHtml(String(totals.units || 0))}</strong></div>
+      <div class="metric"><span>Revenue</span><strong>${money(totals.revenue)}</strong></div>
+    </section>
+    <section class="published-detail-panel stats-panel">
+      <div class="published-detail-header">
+        <div><h3>Daily performance</h3><p class="meta">${stats ? `Updated ${new Date(stats.fetchedAt).toLocaleString("en-GB")}` : "Loading stats..."}</p></div>
+      </div>
+      ${days.length ? `
+        <div class="stats-bars" aria-label="Daily views and sales">
+          ${days.map((day) => `<div class="stats-bar" title="${escapeAttr(day.label)}: ${day.views} views, ${day.units} sold"><span class="views" style="height:${Math.max(4, Math.round(Number(day.views || 0) / maxViews * 100))}%"></span><span class="units" style="height:${Math.max(4, Math.round(Number(day.units || 0) / maxUnits * 100))}%"></span><small>${escapeHtml(day.label)}</small></div>`).join("")}
+        </div>
+      ` : '<div class="empty-state">Loading eBay stats...</div>'}
+    </section>
+    <section class="stats-days">
+      ${days.map((day) => {
+        const activeItems = (day.items || []).filter((item) => item.views || item.impressions || item.units || item.revenue);
+        return `<details class="stats-day" ${activeItems.length ? "" : ""}>
+          <summary><strong>${escapeHtml(day.label)}</strong><span>${day.views || 0} views / ${day.units || 0} sold / ${money(day.revenue)}</span></summary>
+          ${activeItems.length ? `<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Item</th><th>Views</th><th>Impressions</th><th>Sold</th><th>Revenue</th></tr></thead><tbody>${activeItems.sort((a, b) => (b.views + b.units * 100) - (a.views + a.units * 100)).map((item) => `<tr><td>${escapeHtml(item.title)}<br><span class="meta">eBay ${escapeHtml(item.listingId)}</span></td><td>${escapeHtml(String(item.views || 0))}</td><td>${escapeHtml(String(item.impressions || 0))}</td><td>${escapeHtml(String(item.units || 0))}</td><td>${money(item.revenue)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="meta">No item views or sales recorded for this day.</p>'}
+        </details>`;
+      }).join("")}
+    </section>
+  `;
+  root.querySelector("#statsFilters")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    state.statsDays = Number(new FormData(event.currentTarget).get("days") || 14);
+    state.stats = null;
+    renderStats();
+    await loadStats({ force: true });
+  });
+}
+
+async function loadStats({ force = false } = {}) {
+  if (state.stats && !force && Number(state.statsDays) === Number(state.stats.days?.length || state.statsDays)) {
+    renderStats();
+    return;
+  }
+  renderStats();
+  try {
+    state.stats = await api(`/api/stats?days=${encodeURIComponent(state.statsDays)}`);
+    state.statsError = "";
+  } catch (error) {
+    state.stats = null;
+    state.statsError = error.message;
+  }
+  renderStats();
+}
+
 async function loadPublishedSales() {
   try {
     const result = await api("/api/orders?days=30&offset=0");
@@ -2910,7 +2987,7 @@ function syncCategoryChips() {
   });
 }
 
-$("#refreshButton").addEventListener("click", () => $("#ordersView").classList.contains("active") ? ordersView.load() : $("#repricingView").classList.contains("active") ? repricingView.load() : $("#researchView").classList.contains("active") ? loadResearch() : loadAll());
+$("#refreshButton").addEventListener("click", () => $("#ordersView").classList.contains("active") ? ordersView.load() : $("#repricingView").classList.contains("active") ? repricingView.load() : $("#researchView").classList.contains("active") ? loadResearch() : $("#statsView").classList.contains("active") ? loadStats({ force: true }) : loadAll());
 $("#themeToggle")?.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 });

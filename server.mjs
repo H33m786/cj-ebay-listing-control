@@ -2,6 +2,7 @@ import http from "node:http";
 import { publishingSetup } from "./ebay-setup.mjs";
 import { linkedEbayProfile, identityScope, refreshScopes } from "./ebay-profile.mjs";
 import { fetchOrders } from "./orders.mjs";
+import { buildStats } from "./stats.mjs";
 import { dailyDue, trackingSettings, runTracking, assertTrackingConnection, findLiveOffer, updatePrice } from "./repricing.mjs";
 import { recoveredListingCandidates, browseListingCandidates, mergeRecoveredListings } from "./ebay-recovery.mjs";
 import { readFile as readLocalFile, mkdir, stat } from "node:fs/promises";
@@ -47,6 +48,7 @@ const ebayScopes = [
   "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
+  "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
   "https://api.ebay.com/oauth/api_scope/sell.marketing",
   "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly"
 ];
@@ -2322,6 +2324,17 @@ async function handleApi(req, res, url) {
         sendJson(res, 200, await fetchOrders(url.searchParams, (pathname) => ebayApi(pathname, token), store.published || [], ebayEnvironment()));
       } catch (error) {
         sendJson(res, 400, { error: `Orders could not be loaded. ${error.message} If eBay denies access, reconnect eBay in Settings to approve order access.` });
+      }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/stats") {
+      res.setHeader("Cache-Control", "no-store");
+      try {
+        const token = await getUsableEbayToken();
+        const store = await readStore();
+        sendJson(res, 200, await buildStats(url.searchParams, (pathname) => ebayApi(pathname, token), store.published || [], ebayEnvironment(), ebayMarketplaceId()));
+      } catch (error) {
+        sendJson(res, 400, { error: `Stats could not be loaded. ${error.message}` });
       }
       return;
     }
