@@ -27,7 +27,7 @@ function metricMap(report = {}) {
 function listingRows(published = [], environment = "production") {
   return published
     .filter((item) => item.publishedMode === environment && item.status !== "withdrawn" && item.ebayListingId)
-    .map((item) => ({ id: String(item.id), listingId: String(item.ebayListingId), title: item.title || "Untitled listing", sku: item.sku || "" }));
+    .map((item) => ({ id: String(item.id), listingId: String(item.ebayListingId), title: item.title || "Untitled listing", sku: item.sku || "", publishedAt: item.publishedAt || item.createdAt || null }));
 }
 
 function amountValue(amount) {
@@ -57,6 +57,23 @@ function buildDays(days, now) {
   });
 }
 
+function firstPublishedDate(listings = [], now = new Date()) {
+  const timestamps = listings.map((item) => Date.parse(item.publishedAt)).filter(Number.isFinite);
+  if (!timestamps.length) return null;
+  const date = new Date(Math.min(...timestamps));
+  date.setUTCHours(0, 0, 0, 0);
+  const today = new Date(now);
+  today.setUTCHours(0, 0, 0, 0);
+  return date > today ? today : date;
+}
+
+function daysSince(start, now = new Date()) {
+  if (!start) return 14;
+  const today = new Date(now);
+  today.setUTCHours(0, 0, 0, 0);
+  return Math.max(1, Math.floor((today - start) / 86400000) + 1);
+}
+
 async function allOrders(days, request, published, environment, now) {
   const orders = [];
   let offset = 0;
@@ -82,15 +99,20 @@ async function trafficForDay(day, listings, request, marketplaceId) {
 }
 
 export async function buildStats(params, request, published = [], environment = "production", marketplaceId = "EBAY_GB", now = new Date()) {
-  const daysRequested = Number(params.get("days") || 14);
-  if (![7, 14, 30, 90].includes(daysRequested)) throw new Error("Choose a stats range of 7, 14, 30, or 90 days.");
+  const listings = listingRows(published, environment);
+  const requestedRange = String(params.get("days") || "14").toLowerCase();
+  const since = requestedRange === "all";
+  const firstDate = firstPublishedDate(listings, now);
+  const rawDays = since ? daysSince(firstDate, now) : Number(requestedRange);
+  if (!Number.isInteger(rawDays) || rawDays < 1 || (!since && rawDays > 365)) throw new Error("Choose a stats range of 7, 14, 30, 90, or since first published.");
+  const daysRequested = Math.min(rawDays, 365);
   const dailyTrafficDays = Math.min(daysRequested, 30);
   const days = buildDays(daysRequested, now);
   const dayByKey = new Map(days.map((day) => [day.date, day]));
-  const listings = listingRows(published, environment);
   const listingById = new Map(listings.map((listing) => [listing.listingId, listing]));
   const totals = { views: 0, impressions: 0, units: 0, revenue: 0, orders: 0 };
   const warnings = [];
+  if (since && rawDays > 365) warnings.push("Stats are capped at the latest 365 days to keep eBay requests bounded.");
 
   try {
     const orders = await allOrders(daysRequested, request, published, environment, now);
@@ -146,6 +168,9 @@ export async function buildStats(params, request, published = [], environment = 
     environment,
     marketplaceId,
     trafficDays: dailyTrafficDays,
+    range: since ? "all" : String(daysRequested),
+    sinceFirstPublished: since,
+    firstPublishedAt: firstDate ? firstDate.toISOString() : null,
     fetchedAt: new Date().toISOString(),
     warnings
   };

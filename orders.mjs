@@ -3,7 +3,7 @@ import { ebaySku } from "./public/listing.js";
 export function orderQuery(params, now = new Date()) {
   const days = Number(params.get("days") || 30);
   const offset = Number(params.get("offset") || 0);
-  if (![7, 30, 90].includes(days) || !Number.isInteger(offset) || offset < 0 || offset > 10000) throw new Error("Invalid order date range or page.");
+  if (!Number.isInteger(days) || days < 1 || days > 365 || !Number.isInteger(offset) || offset < 0 || offset > 10000) throw new Error("Invalid order date range or page.");
   const from = new Date(now.getTime() - days * 86400000).toISOString();
   return new URLSearchParams({ filter: `creationdate:[${from}..]`, limit: "50", offset: String(offset) });
 }

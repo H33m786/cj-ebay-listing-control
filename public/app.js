@@ -23,7 +23,7 @@ const state = {
   publishedSalesError: "",
   stats: null,
   statsError: "",
-  statsDays: 14,
+  statsDays: "all",
   settings: null,
   ebayAccountSetup: null
 };
@@ -710,6 +710,37 @@ async function localApi(path, options, originalError) {
 
   if (url.pathname === "/api/drafts" && (!options.method || options.method === "GET")) {
     return store;
+  }
+
+  if (url.pathname === "/api/stats") {
+    const range = String(url.searchParams.get("days") || "14").toLowerCase();
+    const active = (store.published || []).filter((item) => item.status !== "withdrawn");
+    const first = active.map((item) => Date.parse(item.publishedAt || item.createdAt)).filter(Number.isFinite).sort((a, b) => a - b)[0];
+    const rawDays = range === "all" && first ? Math.max(1, Math.floor((Date.now() - first) / 86400000) + 1) : Number(range || 14);
+    const daysCount = Math.min(Number.isFinite(rawDays) && rawDays > 0 ? rawDays : 14, 365);
+    const days = Array.from({ length: daysCount }, (_, index) => {
+      const date = new Date();
+      date.setHours(0, 0, 0, 0);
+      date.setDate(date.getDate() - (daysCount - 1 - index));
+      const key = date.toISOString().slice(0, 10);
+      const items = active
+        .filter((item) => !item.publishedAt || String(item.publishedAt).slice(0, 10) <= key)
+        .map((item) => ({ listingId: String(item.ebayListingId || item.id), title: item.title, sku: item.sku || "", views: 0, impressions: 0, units: 0, revenue: 0 }));
+      return { date: key, label: date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" }), views: 0, impressions: 0, units: 0, revenue: 0, items };
+    });
+    return {
+      days,
+      totals: { views: 0, impressions: 0, units: 0, revenue: 0, orders: 0 },
+      listings: active.map((item) => ({ id: item.id, listingId: String(item.ebayListingId || item.id), title: item.title, sku: item.sku || "", publishedAt: item.publishedAt || item.createdAt || null })),
+      environment: "simulated",
+      marketplaceId: "EBAY_GB",
+      trafficDays: 0,
+      range,
+      sinceFirstPublished: range === "all",
+      firstPublishedAt: first ? new Date(first).toISOString() : null,
+      fetchedAt: new Date().toISOString(),
+      warnings: ["Local demo stats use the app's published listing records. Connect the desktop app to eBay for live views and sales."]
+    };
   }
 
   if (url.pathname === "/api/drafts" && options.method === "POST") {
@@ -2480,7 +2511,8 @@ function renderStats() {
     <form class="toolbar stats-toolbar" id="statsFilters">
       <label>Stats range
         <select name="days">
-          ${[7, 14, 30, 90].map((days) => `<option value="${days}" ${Number(state.statsDays) === days ? "selected" : ""}>Last ${days} days</option>`).join("")}
+          <option value="all" ${String(state.statsDays) === "all" ? "selected" : ""}>Since first published</option>
+          ${[7, 14, 30, 90].map((days) => `<option value="${days}" ${String(state.statsDays) === String(days) ? "selected" : ""}>Last ${days} days</option>`).join("")}
         </select>
       </label>
       <button type="submit">Refresh stats</button>
@@ -2494,7 +2526,7 @@ function renderStats() {
     </section>
     <section class="published-detail-panel stats-panel">
       <div class="published-detail-header">
-        <div><h3>Daily performance</h3><p class="meta">${stats ? `Updated ${new Date(stats.fetchedAt).toLocaleString("en-GB")}` : "Loading stats..."}</p></div>
+        <div><h3>Daily performance</h3><p class="meta">${stats ? `${stats.sinceFirstPublished ? "Since first published" : `Last ${stats.days.length} days`} / Updated ${new Date(stats.fetchedAt).toLocaleString("en-GB")}` : "Loading stats..."}</p></div>
       </div>
       ${days.length ? `
         <div class="stats-bars" aria-label="Daily views and sales">
@@ -2514,7 +2546,7 @@ function renderStats() {
   `;
   root.querySelector("#statsFilters")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    state.statsDays = Number(new FormData(event.currentTarget).get("days") || 14);
+    state.statsDays = String(new FormData(event.currentTarget).get("days") || "all");
     state.stats = null;
     renderStats();
     await loadStats({ force: true });
@@ -2522,7 +2554,7 @@ function renderStats() {
 }
 
 async function loadStats({ force = false } = {}) {
-  if (state.stats && !force && Number(state.statsDays) === Number(state.stats.days?.length || state.statsDays)) {
+  if (state.stats && !force && String(state.stats.range || state.stats.days?.length) === String(state.statsDays)) {
     renderStats();
     return;
   }

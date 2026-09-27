@@ -2797,7 +2797,7 @@ const server = http.createServer(async (req, res) => {
   if (await accessGuard.handleSession(req, res, url)) return;
   if (!accessGuard(req, res, url)) return;
   if (url.pathname === "/healthz") {
-    sendJson(res, 200, { status: "ok", revision: process.env.RENDER_GIT_COMMIT || "local", features: ["orders", "price-tracking"] });
+    sendJson(res, 200, { status: "ok", revision: process.env.RENDER_GIT_COMMIT || "local", features: ["orders", "price-tracking", "stats"] });
     return;
   }
   if (url.pathname === "/auth/ebay/callback") {

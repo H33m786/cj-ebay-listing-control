@@ -35,9 +35,10 @@ test("unpaid, cancelled, fulfilled and missing delivery are warned", () => {
   assert.equal(normalizeOrder({}).items.length, 0);
 });
 test("date windows and pagination are bounded and encoded", () => {
-  const query = orderQuery(new URLSearchParams("days=7&offset=50"), new Date("2026-09-18T00:00:00Z"));
-  assert.equal(query.get("filter"), "creationdate:[2026-09-11T00:00:00.000Z..]");
+  const query = orderQuery(new URLSearchParams("days=14&offset=50"), new Date("2026-09-18T00:00:00Z"));
+  assert.equal(query.get("filter"), "creationdate:[2026-09-04T00:00:00.000Z..]");
   assert.equal(query.get("offset"), "50");
+  assert.equal(orderQuery(new URLSearchParams("days=365"), new Date("2026-09-18T00:00:00Z")).get("filter"), "creationdate:[2025-09-18T00:00:00.000Z..]");
   for (const value of ["days=500", "offset=-1", "offset=0.5", "offset=10001", "offset=NaN"]) assert.throws(() => orderQuery(new URLSearchParams(value)));
 });
 test("fetch passes fixed eBay path, follows pagination without following upstream URLs", async () => {

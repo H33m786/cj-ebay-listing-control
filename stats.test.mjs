@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { buildStats } from "./stats.mjs";
 
 const published = [
-  { id: "local-1", publishedMode: "production", ebayListingId: "1001", title: "USB Charger", sku: "USB1" },
-  { id: "local-2", publishedMode: "production", ebayListingId: "1002", title: "Phone Case", sku: "CASE1" }
+  { id: "local-1", publishedMode: "production", ebayListingId: "1001", title: "USB Charger", sku: "USB1", publishedAt: "2026-09-20T09:00:00.000Z" },
+  { id: "local-2", publishedMode: "production", ebayListingId: "1002", title: "Phone Case", sku: "CASE1", publishedAt: "2026-09-25T09:00:00.000Z" }
 ];
 
 const order = {
@@ -56,4 +56,27 @@ test("buildStats keeps sales when analytics traffic is unavailable", async () =>
   assert.equal(result.totals.units, 2);
   assert.equal(result.totals.views, 0);
   assert.match(result.warnings.join(" "), /Views unavailable/);
+});
+
+test("buildStats can run since the first published listing", async () => {
+  const result = await buildStats(new URLSearchParams({ days: "all" }), async (path) => {
+    if (path.startsWith("/sell/fulfillment")) return { orders: [], total: 0 };
+    return traffic([]);
+  }, published, "production", "EBAY_GB", new Date("2026-09-27T12:00:00.000Z"));
+
+  assert.equal(result.days.length, 8);
+  assert.equal(result.days[0].date, "2026-09-20");
+  assert.equal(result.sinceFirstPublished, true);
+  assert.equal(result.range, "all");
+});
+
+test("buildStats caps since-first-published range at 365 days", async () => {
+  const oldPublished = [{ ...published[0], publishedAt: "2024-01-01T09:00:00.000Z" }];
+  const result = await buildStats(new URLSearchParams({ days: "all" }), async (path) => {
+    if (path.startsWith("/sell/fulfillment")) return { orders: [], total: 0 };
+    return traffic([]);
+  }, oldPublished, "production", "EBAY_GB", new Date("2026-09-27T12:00:00.000Z"));
+
+  assert.equal(result.days.length, 365);
+  assert.match(result.warnings.join(" "), /capped/);
 });
