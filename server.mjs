@@ -16,6 +16,7 @@ import { normalizeQuotes } from "./cj-quotes.mjs";
 import { listingRows, mainListingRowIndex, prepareListing, variationErrors, inventoryPayload, inventoryGroup, aspectMap, categoryErrors, alignVariationAxesToSchema, collapseSingleVariation } from "./public/listing.js";
 import { buildDraftDescription, buildEbayListingDescription } from "./public/description.js";
 import { riskyTermsForDraft } from "./public/risk-terms.js";
+import { fetchUsdToGbpRate } from "./exchange-rate.mjs";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -2281,7 +2282,7 @@ function enqueueRepricing(options) {
     async connect(settings, preview) {
       const token = await getUsableEbayToken();
       assertTrackingConnection(settings, { environment: ebayEnvironment(), connectionId: token.connectionId, liveEnabled: process.env.EBAY_LIVE_PUBLISH === "true", productionConfirmed: process.env.EBAY_PRODUCTION_CONFIRM === "REAL_LISTINGS_ENABLED" }, preview);
-      return { request: (pathname, options) => ebayApi(pathname, token, options) };
+      return { request: (pathname, options) => ebayApi(pathname, token, options), usdToGbpRate: () => fetchUsdToGbpRate() };
     }
   }, options)));
   draftQueue = operation.catch(() => { console.error("Price tracking could not complete; inspect storage and tracking status."); }).finally(() => { repricingQueued = false; });
@@ -2290,6 +2291,15 @@ function enqueueRepricing(options) {
 
 async function handleApi(req, res, url) {
   try {
+    if (req.method === "GET" && url.pathname === "/api/exchange-rate/usd-gbp") {
+      res.setHeader("Cache-Control", "no-store");
+      try {
+        sendJson(res, 200, await fetchUsdToGbpRate());
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/repricing") {
       const store = await readStore();
       const { connectionId, ...settings } = store.repricing || { enabled: false, autoApply: false, maxChangePercent: 20, rules: {} };

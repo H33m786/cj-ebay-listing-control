@@ -8,6 +8,7 @@ export function dailyDue(settings, now = new Date()) {
 export function trackingSettings(input, published, connection) {
   const limit = Number(input.maxChangePercent);
   if (!Number.isFinite(limit) || limit <= 0 || limit > 25) throw new Error("Maximum automatic price change must be between 0 and 25%.");
+  const autoFxUsdToGbp = input.autoFxUsdToGbp === true;
   const rules = {};
   for (const listing of published) {
     const rule = input.rules?.[listing.id];
@@ -15,11 +16,11 @@ export function trackingSettings(input, published, connection) {
     if (listing.publishedMode !== connection.environment) throw new Error("Select listings from the connected eBay environment only.");
     const margin = Number(rule.targetMarginPercent);
     const rate = Number(rule.usdToGbp);
-    if (!Number.isFinite(margin) || margin <= 0 || margin >= 100 || !Number.isFinite(rate) || rate <= 0) throw new Error("Each tracked listing needs a target margin and a positive GBP-per-USD rate.");
-    rules[listing.id] = { enabled: true, targetMarginPercent: margin, usdToGbp: rate, cjShippingService: String(rule.cjShippingService || "").trim() };
+    if (!Number.isFinite(margin) || margin <= 0 || margin >= 100 || (!autoFxUsdToGbp && (!Number.isFinite(rate) || rate <= 0))) throw new Error("Each tracked listing needs a target margin and a positive GBP-per-USD rate.");
+    rules[listing.id] = { enabled: true, targetMarginPercent: margin, usdToGbp: Number.isFinite(rate) && rate > 0 ? rate : null, cjShippingService: String(rule.cjShippingService || "").trim() };
   }
   if (input.autoApply === true && !connection.connectionId) throw new Error("Reconnect eBay before enabling automatic price updates.");
-  return { enabled: input.enabled === true, autoApply: input.autoApply === true, maxChangePercent: limit, rules,
+  return { enabled: input.enabled === true, autoApply: input.autoApply === true, autoFxUsdToGbp, maxChangePercent: limit, rules,
     environment: connection.environment, connectionId: connection.connectionId || null };
 }
 
@@ -128,6 +129,15 @@ export async function runTracking({ readStore, saveStore, connect, quote }, { sc
   await saveStore(store);
   try {
     const adapter = await connect(settings, settings.run.preview);
+    let liveFx = null;
+    if (settings.autoFxUsdToGbp === true) {
+      if (typeof adapter.usdToGbpRate !== "function") throw new Error("Automatic USD to GBP exchange rate is unavailable.");
+      liveFx = await adapter.usdToGbpRate();
+      settings.lastUsdToGbp = liveFx.rate;
+      settings.lastUsdToGbpAt = new Date().toISOString();
+      settings.lastUsdToGbpDate = liveFx.date || null;
+      await saveStore(store);
+    }
     const deadline = Date.now() + 15 * 60 * 1000;
     let problems = 0;
     let checked = 0;
@@ -135,7 +145,8 @@ export async function runTracking({ readStore, saveStore, connect, quote }, { sc
       const rule = settings.rules?.[listing.id];
       if (!rule?.enabled) continue;
       if (listing.publishedMode !== settings.environment) continue;
-      await repriceListing(listing, rule, { ...settings, autoApply: !settings.run.preview }, {
+      const effectiveRule = liveFx ? { ...rule, usdToGbp: liveFx.rate } : rule;
+      await repriceListing(listing, effectiveRule, { ...settings, autoApply: !settings.run.preview }, {
         request: adapter.request, quote: async (row) => {
           if (Date.now() > deadline) throw new Error("Price check time limit reached. Remaining items require another check.");
           return quote(row);

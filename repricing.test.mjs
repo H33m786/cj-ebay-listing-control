@@ -26,6 +26,7 @@ test("automatic updates fail closed across environments, reconnects and producti
 test("tracking settings validate environment, rates, margins, bounds and connection", () => {
   const connection = { environment: "production", connectionId: "connection" };
   assert.equal(trackingSettings(settings, [row], connection).rules.draft.usdToGbp, 0.75);
+  assert.equal(trackingSettings({ ...settings, autoFxUsdToGbp: true, rules: { draft: { ...rule, usdToGbp: "" } } }, [row], connection).rules.draft.usdToGbp, null);
   assert.throws(() => trackingSettings(settings, [row], { environment: "sandbox" }));
   assert.throws(() => trackingSettings(settings, [row], { environment: "production" }));
   for (const value of [-1, 0, 30, NaN]) assert.throws(() => trackingSettings({ ...settings, maxChangePercent: value }, [row], connection));
@@ -141,6 +142,19 @@ test("scheduled job persists failures, respects preview and isolates failed item
   await runTracking({ readStore: async () => store, saveStore: async () => { saves++; }, connect: async (_settings, preview) => { assert.equal(preview, true); return { request: check.request }; }, quote: async () => { throw new Error("CJ unavailable"); } }, { preview: false });
   assert.equal(store.repricing.run.status, "needs-review"); assert.equal(check.posts(), 0); assert.ok(saves >= 3);
   assert.equal(store.published[0].priceHistory[0].status, "failed");
+});
+test("automatic FX tracking uses the latest USD to GBP rate", async () => {
+  const store = { published: [structuredClone(row)], repricing: { ...settings, autoApply: false, autoFxUsdToGbp: true, rules: { draft: { ...rule, usdToGbp: null } } } };
+  const check = harness();
+  await runTracking({
+    readStore: async () => store,
+    saveStore: async () => {},
+    connect: async () => ({ request: check.request, usdToGbpRate: async () => ({ rate: 0.7, date: "2026-09-27" }) }),
+    quote: async () => quote
+  }, { preview: true });
+  assert.equal(store.repricing.lastUsdToGbp, 0.7);
+  assert.equal(store.repricing.lastUsdToGbpDate, "2026-09-27");
+  assert.equal(store.published[0].priceHistory.at(-1).price, 25.25);
 });
 test("disabled or already-attempted daily jobs do not contact suppliers or eBay", async () => {
   for (const config of [{ ...settings, enabled: false }, { ...settings, lastScheduledDate: new Date().toISOString().slice(0, 10) }]) {
