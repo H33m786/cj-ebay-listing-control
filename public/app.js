@@ -2496,6 +2496,50 @@ function renderSalesGraph(days) {
   `;
 }
 
+function statsLineGraph(days) {
+  if (!days.length) return '<div class="empty-state">Loading eBay stats...</div>';
+  const width = 720;
+  const height = 260;
+  const pad = { top: 18, right: 20, bottom: 38, left: 42 };
+  const plotWidth = width - pad.left - pad.right;
+  const plotHeight = height - pad.top - pad.bottom;
+  const maxViews = Math.max(1, ...days.map((day) => Number(day.views || 0)));
+  const maxUnits = Math.max(1, ...days.map((day) => Number(day.units || 0)));
+  const point = (day, index, key, max) => {
+    const x = pad.left + (days.length === 1 ? plotWidth / 2 : index / (days.length - 1) * plotWidth);
+    const y = pad.top + plotHeight - (Number(day[key] || 0) / max * plotHeight);
+    return { x: Number(x.toFixed(2)), y: Number(y.toFixed(2)) };
+  };
+  const pathFor = (key, max) => days.map((day, index) => {
+    const { x, y } = point(day, index, key, max);
+    return `${index ? "L" : "M"}${x},${y}`;
+  }).join(" ");
+  const labelIndexes = [...new Set([0, Math.floor((days.length - 1) / 2), days.length - 1])].filter((index) => index >= 0);
+  return `
+    <div class="stats-line-wrap">
+      <svg class="stats-line-graph" viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily views and units sold line graph">
+        <line class="axis" x1="${pad.left}" y1="${pad.top + plotHeight}" x2="${width - pad.right}" y2="${pad.top + plotHeight}" />
+        <line class="axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + plotHeight}" />
+        ${[0.25, 0.5, 0.75].map((tick) => `<line class="grid" x1="${pad.left}" y1="${pad.top + plotHeight - tick * plotHeight}" x2="${width - pad.right}" y2="${pad.top + plotHeight - tick * plotHeight}" />`).join("")}
+        <path class="line views" d="${pathFor("views", maxViews)}" />
+        <path class="line units" d="${pathFor("units", maxUnits)}" />
+        ${days.map((day, index) => {
+          const view = point(day, index, "views", maxViews);
+          const unit = point(day, index, "units", maxUnits);
+          return `<circle class="dot views" cx="${view.x}" cy="${view.y}" r="4"><title>${escapeHtml(day.label)}: ${day.views || 0} views</title></circle><circle class="dot units" cx="${unit.x}" cy="${unit.y}" r="4"><title>${escapeHtml(day.label)}: ${day.units || 0} sold</title></circle>`;
+        }).join("")}
+        ${labelIndexes.map((index) => {
+          const x = point(days[index], index, "views", maxViews).x;
+          return `<text class="x-label" x="${x}" y="${height - 10}" text-anchor="${index === 0 ? "start" : index === days.length - 1 ? "end" : "middle"}">${escapeHtml(days[index].label)}</text>`;
+        }).join("")}
+        <text class="y-label" x="8" y="${pad.top + 4}">${escapeHtml(String(maxViews))} views</text>
+        <text class="y-label units-label" x="${width - pad.right}" y="${pad.top + 4}" text-anchor="end">${escapeHtml(String(maxUnits))} sold</text>
+      </svg>
+      <div class="stats-legend"><span class="views">Views</span><span class="units">Units sold</span></div>
+    </div>
+  `;
+}
+
 function renderStats() {
   const root = $("#statsView");
   const stats = state.stats;
@@ -2505,8 +2549,6 @@ function renderStats() {
   }
   const totals = stats?.totals || { views: 0, impressions: 0, units: 0, revenue: 0, orders: 0 };
   const days = stats?.days || [];
-  const maxViews = Math.max(1, ...days.map((day) => Number(day.views || 0)));
-  const maxUnits = Math.max(1, ...days.map((day) => Number(day.units || 0)));
   root.innerHTML = `
     <form class="toolbar stats-toolbar" id="statsFilters">
       <label>Stats range
@@ -2528,11 +2570,7 @@ function renderStats() {
       <div class="published-detail-header">
         <div><h3>Daily performance</h3><p class="meta">${stats ? `${stats.sinceFirstPublished ? "Since first published" : `Last ${stats.days.length} days`} / Updated ${new Date(stats.fetchedAt).toLocaleString("en-GB")}` : "Loading stats..."}</p></div>
       </div>
-      ${days.length ? `
-        <div class="stats-bars" aria-label="Daily views and sales">
-          ${days.map((day) => `<div class="stats-bar" title="${escapeAttr(day.label)}: ${day.views} views, ${day.units} sold"><span class="views" style="height:${Math.max(4, Math.round(Number(day.views || 0) / maxViews * 100))}%"></span><span class="units" style="height:${Math.max(4, Math.round(Number(day.units || 0) / maxUnits * 100))}%"></span><small>${escapeHtml(day.label)}</small></div>`).join("")}
-        </div>
-      ` : '<div class="empty-state">Loading eBay stats...</div>'}
+      ${statsLineGraph(days)}
     </section>
     <section class="stats-days">
       ${days.map((day) => {
