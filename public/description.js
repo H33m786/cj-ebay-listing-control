@@ -27,7 +27,9 @@ export function buildDraftDescription(product = {}) {
   const lines = [
     title,
     "",
-    body || "New supplier-sourced item. Review the specifications below and update any details before publishing.",
+    body || "A new supplier-sourced item ready to be reviewed, priced and prepared for sale.",
+    "",
+    "This listing should be checked against the selected CJ variant before publishing so the size, colour, specification and delivery estimate match the exact item being sold.",
     "",
     specs.length ? "Item details:" : "",
     ...specs.map(([name, value]) => `- ${name}: ${value}`),
@@ -44,30 +46,48 @@ export function buildDraftDescription(product = {}) {
 
 export function buildEbayListingDescription(draft = {}, imageCount = 0) {
   const rows = draft.multiVariation ? (draft.listingVariants || []).filter((row) => row.enabled) : [];
-  const variantLines = rows.map((row) => {
+  const variantRows = rows.map((row) => {
     const aspects = Object.entries(row.aspects || {}).filter(([, value]) => String(value || "").trim());
     const detail = aspects.map(([name, value]) => `${name}: ${value}`).join(", ");
-    return `- ${row.label || row.cjVariantId}${detail ? ` (${detail})` : ""}`;
+    return { label: plainText(row.label || row.cjVariantId || "Option"), detail: plainText(detail) };
   });
   const specifics = Object.entries(draft.itemSpecifics || {})
-    .filter(([name, value]) => name !== "Condition" && String(value || "").trim())
-    .map(([name, value]) => `- ${name}: ${Array.isArray(value) ? value.join(", ") : value}`);
-  const lines = [
-    draft.description,
-    "",
-    specifics.length ? "Item specifics:" : "",
-    ...specifics,
-    variantLines.length ? "" : "",
-    variantLines.length ? "Available variations:" : "",
-    ...variantLines.slice(0, 40),
-    variantLines.length > 40 ? `- Plus ${variantLines.length - 40} more variations` : "",
-    "",
-    "Condition: New.",
-    draft.itemSpecifics?.Brand ? "" : "Brand: Unbranded.",
-    imageCount > 1 ? `Gallery: ${imageCount} supplier images included.` : "",
-    "Dispatch and delivery estimates are based on supplier data and should be checked before production use."
-  ];
-  return compactLines(lines).join("\n").slice(0, 5000);
+    .filter(([name, value]) => !["Condition", "Brand"].includes(name) && String(value || "").trim())
+    .map(([name, value]) => [plainText(name), plainText(Array.isArray(value) ? value.join(", ") : value)]);
+  const intro = descriptionParagraphs(draft.description);
+  const title = plainText(draft.title || "Product details");
+  const condition = plainText(draft.itemSpecifics?.Condition || "New");
+  const brand = plainText(draft.itemSpecifics?.Brand || "Unbranded");
+  const galleryNote = imageCount > 1 ? `${imageCount} supplier images are included in the gallery.` : "";
+  const html = `
+    <div style="font-family: Arial, sans-serif; color: #1f2933; line-height: 1.55; font-size: 15px;">
+      <h2 style="font-size: 22px; margin: 0 0 12px;">${escapeHtml(title)}</h2>
+      ${intro.map((paragraph) => `<p style="margin: 0 0 12px;">${escapeHtml(paragraph)}</p>`).join("")}
+      <p style="margin: 0 0 16px;">Please choose the correct option before ordering and check the gallery for the style, colour and finish of the item.</p>
+      <h3 style="font-size: 17px; margin: 18px 0 8px;">Key Details</h3>
+      <table style="border-collapse: collapse; width: 100%; max-width: 760px;">
+        <tbody>
+          <tr><th style="${tableHeadStyle()}">Condition</th><td style="${tableCellStyle()}">${escapeHtml(condition)}</td></tr>
+          <tr><th style="${tableHeadStyle()}">Brand</th><td style="${tableCellStyle()}">${escapeHtml(brand)}</td></tr>
+          ${specifics.slice(0, 24).map(([name, value]) => `<tr><th style="${tableHeadStyle()}">${escapeHtml(name)}</th><td style="${tableCellStyle()}">${escapeHtml(value)}</td></tr>`).join("")}
+        </tbody>
+      </table>
+      ${specifics.length > 24 ? `<p style="margin: 10px 0 0;">Additional item information may be shown in the eBay item specifics section.</p>` : ""}
+      ${variantRows.length ? `
+        <h3 style="font-size: 17px; margin: 18px 0 8px;">Available Variations</h3>
+        <ul style="margin: 0 0 16px 18px; padding: 0;">
+          ${variantRows.slice(0, 40).map((row) => `<li style="margin: 0 0 6px;"><strong>${escapeHtml(row.label)}</strong>${row.detail ? ` - ${escapeHtml(row.detail)}` : ""}</li>`).join("")}
+          ${variantRows.length > 40 ? `<li>Plus ${variantRows.length - 40} more variations.</li>` : ""}
+        </ul>
+      ` : ""}
+      <h3 style="font-size: 17px; margin: 18px 0 8px;">Dispatch and Delivery</h3>
+      <p style="margin: 0 0 12px;">This item is dispatched using supplier fulfilment. Delivery estimates, handling times and shipping services are based on the selected supplier option.</p>
+      ${galleryNote ? `<p style="margin: 0 0 12px;">${escapeHtml(galleryNote)}</p>` : ""}
+      <h3 style="font-size: 17px; margin: 18px 0 8px;">Before You Order</h3>
+      <p style="margin: 0;">Please review the selected variation, item specifics and delivery estimate carefully before purchase.</p>
+    </div>
+  `;
+  return compactHtml(html).slice(0, 5000);
 }
 
 export function productSpecEntries(product = {}) {
@@ -132,6 +152,42 @@ function plainText(value) {
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
+    .trim();
+}
+
+function descriptionParagraphs(value) {
+  const text = plainText(value);
+  if (!text) return ["A practical, supplier-sourced item prepared with the available product information and selected listing details."];
+  const sentences = text
+    .split(/(?<=[.!?])\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (sentences.length <= 2) return [text];
+  const paragraphs = [];
+  for (let index = 0; index < sentences.length; index += 2) paragraphs.push(sentences.slice(index, index + 2).join(" "));
+  return paragraphs.slice(0, 4);
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function tableHeadStyle() {
+  return "text-align:left;border:1px solid #d7dde5;background:#f5f7fa;padding:9px 10px;width:34%;font-weight:700;";
+}
+
+function tableCellStyle() {
+  return "border:1px solid #d7dde5;padding:9px 10px;";
+}
+
+function compactHtml(value) {
+  return String(value || "")
+    .replace(/\n\s*/g, "")
+    .replace(/\s{2,}/g, " ")
     .trim();
 }
 

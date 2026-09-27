@@ -23,6 +23,7 @@ test("draft descriptions include supplier details, specs and variants", () => {
 
 test("eBay listing descriptions include edited specifics and enabled variations", () => {
   const description = buildEbayListingDescription({
+    title: "Men's Soft Shell Jacket",
     description: "Warm outdoor jacket with soft shell finish.",
     itemSpecifics: { Brand: "Unbranded", Department: "Men", "Outer Shell Material": "Polyester" },
     multiVariation: true,
@@ -31,10 +32,16 @@ test("eBay listing descriptions include edited specifics and enabled variations"
       { enabled: false, label: "Grey-L", aspects: { Colour: "Grey", Size: "L" } }
     ]
   }, 4);
-  assert.match(description, /Item specifics/);
-  assert.match(description, /Department: Men/);
-  assert.match(description, /Outer Shell Material: Polyester/);
-  assert.match(description, /Black-M \(Colour: Black, Size: M\)/);
+  assert.match(description, /<h2/);
+  assert.match(description, /Key Details/);
+  assert.match(description, /Department/);
+  assert.match(description, /Men/);
+  assert.match(description, /Outer Shell Material/);
+  assert.match(description, /Polyester/);
+  assert.match(description, /Available Variations/);
+  assert.match(description, /Black-M/);
+  assert.match(description, /Colour: Black, Size: M/);
   assert.doesNotMatch(description, /Grey-L/);
-  assert.match(description, /Gallery: 4 supplier images included/);
+  assert.match(description, /4 supplier images are included/);
+  assert.match(description, /Dispatch and Delivery/);
 });
