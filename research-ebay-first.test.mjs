@@ -1,6 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { discoveryMatch, discoveryTerm, discoverySettings, ebayFirstResearch } from "./research-ebay-first.mjs";
+import { chargerSearchMatches, discoveryMatch, discoveryTerm, discoverySettings, ebayFirstResearch } from "./research-ebay-first.mjs";
+
+test("generic charger search accepts all charger types but respects explicit qualifiers", () => {
+  for (const title of ["20W wall charger", "15W wireless charger", "30W car charger"]) assert.equal(chargerSearchMatches("charger", title), true);
+  assert.equal(chargerSearchMatches("wireless charger", "20W wall charger"), false);
+  assert.equal(chargerSearchMatches("car charger", "30W car charger"), true);
+  assert.equal(chargerSearchMatches("20W charger", "65W charger"), false);
+  assert.equal(chargerSearchMatches("charger", "USB charger cable"), false);
+});
+
+test("broad charger discovery prices each charger type against its own eBay peers", async () => {
+  const types = [{ title: "20W wall charger", price: 20 }, { title: "15W wireless charger", price: 30 }, { title: "30W car charger", price: 40 }];
+  const compared = [];
+  const result = await ebayFirstResearch(options({ terms: ["charger"],
+    searchEbay: async () => types.flatMap((type) => peers.map((item) => ({ ...item, ...type }))),
+    searchCj: async (term) => { assert.equal(term, "charger"); return types.map((type, i) => ({ ...type, pid: String(i) })); },
+    quote: async (product, median) => { compared.push(median); return { minimumSalePrice: 15 }; }
+  }));
+  assert.equal(result.recommendations.length, 3);
+  assert.deepEqual(compared, [22, 32, 42]);
+});
 
 test("charger synonyms and specifications beyond truncated title words can match", () => {
   const match = discoveryMatch("20W USB-C Fast Charger For iPhone Samsung", "European Home Portable Mobile Phone Travel 20 Watts Type C Charging Head", () => 0);
@@ -29,13 +49,13 @@ test("charger discovery removes advertising without discarding power or product 
   assert.equal(discoveryTerm("Genuine Original Premium 20W USB Charger Free Delivery"), "20w usb charger");
   assert.match(discoveryTerm("Wireless 15W car charger"), /wireless 15w car charger/);
 });
-test("broad charger results trigger focused eBay comparisons before CJ search", async () => {
+test("broad non-charger results trigger focused eBay comparisons before CJ search", async () => {
   const calls = [];
-  const result = await ebayFirstResearch(options({ terms: ["charger"], searchEbay: async (term) => {
+  const result = await ebayFirstResearch(options({ terms: ["electronics"], searchEbay: async (term) => {
     calls.push(term);
-    return term === "charger" ? peers.slice(0, 1) : peers;
+    return term === "electronics" ? peers.slice(0, 1) : peers;
   } }));
-  assert.deepEqual(calls, ["charger", "usb desk lamp"]);
+  assert.deepEqual(calls, ["electronics", "usb desk lamp"]);
   assert.equal(result.recommendations.length, 1);
 });
 test("unprofitable CJ candidates include price comparison and rejection reason", async () => {
