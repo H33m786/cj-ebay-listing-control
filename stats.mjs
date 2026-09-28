@@ -2,6 +2,9 @@ import { fetchOrders } from "./orders.mjs";
 
 const metrics = ["LISTING_VIEWS_TOTAL", "TOTAL_IMPRESSION_TOTAL", "TRANSACTION"];
 const trafficChunkSize = 15;
+const pastTrafficTtlMs = 24 * 60 * 60 * 1000;
+const todayTrafficTtlMs = 2 * 60 * 60 * 1000;
+const trafficLimitCooldownMs = 6 * 60 * 60 * 1000;
 
 function dayKey(date) {
   return date.toISOString().slice(0, 10);
@@ -72,6 +75,73 @@ function addItem(day, listing, patch) {
   item.revenue = Number((item.revenue + (patch.revenue || 0)).toFixed(2));
 }
 
+function isTrafficRateLimit(error) {
+  return /\b2001\b|request limit has been reached|rate limit/i.test(String(error?.message || ""));
+}
+
+function todayKey(now) {
+  const today = new Date(now);
+  today.setUTCHours(0, 0, 0, 0);
+  return dayKey(today);
+}
+
+function trafficCacheEntry(cache, environment, marketplaceId, day) {
+  cache.days ||= {};
+  const key = `${environment}|${marketplaceId}|${day.date}`;
+  cache.days[key] ||= { date: day.date, environment, marketplaceId, listings: {}, fetchedAt: null, trafficUpdatedAt: null };
+  return cache.days[key];
+}
+
+function cachedTrafficIsFresh(entry, day, now) {
+  if (!entry?.fetchedAt) return false;
+  const fetchedAt = Date.parse(entry.fetchedAt);
+  if (!Number.isFinite(fetchedAt)) return false;
+  const ttl = day.date === todayKey(now) ? todayTrafficTtlMs : pastTrafficTtlMs;
+  return now.getTime() - fetchedAt < ttl;
+}
+
+function cachedTrafficMap(entry, listings) {
+  const output = new Map();
+  for (const listing of listings) {
+    const values = entry?.listings?.[listing.listingId];
+    if (!values) continue;
+    output.set(listing.listingId, {
+      LISTING_VIEWS_TOTAL: Number(values.views || 0),
+      TOTAL_IMPRESSION_TOTAL: Number(values.impressions || 0)
+    });
+  }
+  return output;
+}
+
+function storeTraffic(day, listings, traffic, entry, now) {
+  entry.listings ||= {};
+  for (const listing of listings) {
+    const values = traffic.get(listing.listingId);
+    entry.listings[listing.listingId] = {
+      views: values?.LISTING_VIEWS_TOTAL || 0,
+      impressions: values?.TOTAL_IMPRESSION_TOTAL || values?.LISTING_IMPRESSION_TOTAL || 0
+    };
+  }
+  entry.fetchedAt = new Date(now).toISOString();
+  entry.trafficUpdatedAt = day.trafficUpdatedAt || entry.trafficUpdatedAt || null;
+}
+
+function applyTrafficToDay(day, listings, traffic, totals) {
+  day.views = 0;
+  day.impressions = 0;
+  for (const listing of listings) {
+    const values = traffic.get(listing.listingId);
+    if (!values) continue;
+    const views = values.LISTING_VIEWS_TOTAL || 0;
+    const impressions = values.TOTAL_IMPRESSION_TOTAL || values.LISTING_IMPRESSION_TOTAL || 0;
+    day.views += views;
+    day.impressions += impressions;
+    totals.views += views;
+    totals.impressions += impressions;
+    addItem(day, listing, { views, impressions });
+  }
+}
+
 function buildDays(days, now) {
   return Array.from({ length: days }, (_, index) => {
     const date = new Date(now);
@@ -137,7 +207,7 @@ async function trafficForDay(day, listings, request, marketplaceId) {
   return output;
 }
 
-export async function buildStats(params, request, published = [], environment = "production", marketplaceId = "EBAY_GB", now = new Date()) {
+export async function buildStats(params, request, published = [], environment = "production", marketplaceId = "EBAY_GB", now = new Date(), trafficCache = {}) {
   const listings = listingRows(published, environment);
   const requestedRange = String(params.get("days") || "14").toLowerCase();
   const since = requestedRange === "all";
@@ -151,6 +221,12 @@ export async function buildStats(params, request, published = [], environment = 
   const listingById = new Map(listings.map((listing) => [listing.listingId, listing]));
   const totals = { views: 0, impressions: 0, units: 0, revenue: 0, orders: 0 };
   const warnings = [];
+  const warningKeys = new Set();
+  const warnOnce = (key, message) => {
+    if (warningKeys.has(key)) return;
+    warningKeys.add(key);
+    warnings.push(message);
+  };
   if (since && rawDays > 365) warnings.push("Stats are capped at the latest 365 days to keep eBay requests bounded.");
 
   try {
@@ -185,21 +261,49 @@ export async function buildStats(params, request, published = [], environment = 
       day.impressions = null;
     }
     for (const day of trafficDays) {
+      const entry = trafficCacheEntry(trafficCache, environment, marketplaceId, day);
+      const cachedTraffic = cachedTrafficMap(entry, listings);
+      const hasAllCachedListings = listings.every((listing) => cachedTraffic.has(listing.listingId));
+      if (hasAllCachedListings && cachedTrafficIsFresh(entry, day, now)) {
+        day.trafficUpdatedAt = entry.trafficUpdatedAt || null;
+        day.trafficCached = true;
+        applyTrafficToDay(day, listings, cachedTraffic, totals);
+        continue;
+      }
+      const cooldownUntil = Date.parse(trafficCache.cooldownUntil || "");
+      if (Number.isFinite(cooldownUntil) && cooldownUntil > now.getTime()) {
+        if (hasAllCachedListings) {
+          day.trafficUpdatedAt = entry.trafficUpdatedAt || null;
+          day.trafficCached = true;
+          day.trafficStale = true;
+          applyTrafficToDay(day, listings, cachedTraffic, totals);
+        } else {
+          day.views = null;
+          day.impressions = null;
+        }
+        warnOnce("traffic-limit", `Views are temporarily paused because eBay reached the Analytics request limit. Cached view data is shown where available until ${new Date(cooldownUntil).toLocaleString("en-GB")}.`);
+        continue;
+      }
       try {
         const traffic = await trafficForDay(day, listings, request, marketplaceId);
+        storeTraffic(day, listings, traffic, entry, now);
         if (day.trafficPartial) warnings.push(`Views partially unavailable for ${day.date}: eBay returned data for some listings only.`);
-        for (const listing of listings) {
-          const values = traffic.get(listing.listingId);
-          if (!values) continue;
-          const views = values.LISTING_VIEWS_TOTAL || 0;
-          const impressions = values.TOTAL_IMPRESSION_TOTAL || values.LISTING_IMPRESSION_TOTAL || 0;
-          day.views += views;
-          day.impressions += impressions;
-          totals.views += views;
-          totals.impressions += impressions;
-          addItem(day, listing, { views, impressions });
-        }
+        applyTrafficToDay(day, listings, traffic, totals);
       } catch (error) {
+        if (isTrafficRateLimit(error)) {
+          trafficCache.cooldownUntil = new Date(now.getTime() + trafficLimitCooldownMs).toISOString();
+          if (hasAllCachedListings) {
+            day.trafficUpdatedAt = entry.trafficUpdatedAt || null;
+            day.trafficCached = true;
+            day.trafficStale = true;
+            applyTrafficToDay(day, listings, cachedTraffic, totals);
+          } else {
+            day.views = null;
+            day.impressions = null;
+          }
+          warnOnce("traffic-limit", `eBay reached the Analytics request limit. View refreshes are paused for a few hours and cached view data is shown where available.`);
+          continue;
+        }
         day.views = null;
         day.impressions = null;
         warnings.push(`Views unavailable for ${day.date}: ${error.message}`);

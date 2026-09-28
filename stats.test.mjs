@@ -140,6 +140,42 @@ test("stats keep available views when one traffic chunk fails", async () => {
   assert.match(result.warnings.join("\n"), /partially unavailable/);
 });
 
+test("stats reuse fresh cached traffic without calling eBay analytics", async () => {
+  const cache = { days: {
+    "production|EBAY_GB|2026-09-28": {
+      date: "2026-09-28",
+      environment: "production",
+      marketplaceId: "EBAY_GB",
+      fetchedAt: "2026-09-28T11:30:00.000Z",
+      trafficUpdatedAt: "2026-09-28T11:00:00.000Z",
+      listings: { 100000: { views: 6, impressions: 30 } }
+    }
+  } };
+  const result = await buildStats(new URLSearchParams({ days: "1" }), async (path) => {
+    if (path.startsWith("/sell/fulfillment/")) return { orders: [] };
+    throw new Error("analytics should not be called");
+  }, publishedListings(1), "production", "EBAY_GB", new Date("2026-09-28T12:00:00.000Z"), cache);
+
+  assert.equal(result.totals.views, 6);
+  assert.equal(result.totals.impressions, 30);
+  assert.equal(result.days[0].trafficCached, true);
+});
+
+test("stats stop requesting more days after eBay analytics rate limit", async () => {
+  let trafficCalls = 0;
+  const cache = {};
+  const result = await buildStats(new URLSearchParams({ days: "7" }), async (path) => {
+    if (path.startsWith("/sell/fulfillment/")) return { orders: [] };
+    trafficCalls += 1;
+    throw new Error("The request limit has been reached for the resource. (eBay 2001)");
+  }, publishedListings(1), "production", "EBAY_GB", new Date("2026-09-28T12:00:00.000Z"), cache);
+
+  assert.equal(trafficCalls, 1);
+  assert.ok(cache.cooldownUntil);
+  assert.equal(result.warnings.filter((warning) => /Views unavailable for/.test(warning)).length, 0);
+  assert.equal(result.warnings.filter((warning) => /request limit/i.test(warning)).length, 1);
+});
+
 function publishedListings(count) {
   return Array.from({ length: count }, (_, index) => ({
     id: `local-${index}`,

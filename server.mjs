@@ -2604,7 +2604,10 @@ async function handleApi(req, res, url) {
       try {
         const token = await getUsableEbayToken();
         const store = await readStore();
-        sendJson(res, 200, await buildStats(url.searchParams, (pathname) => ebayApi(pathname, token), store.published || [], ebayEnvironment(), ebayMarketplaceId()));
+        store.statsTrafficCache ||= {};
+        const stats = await buildStats(url.searchParams, (pathname) => ebayApi(pathname, token), store.published || [], ebayEnvironment(), ebayMarketplaceId(), new Date(), store.statsTrafficCache);
+        await saveStore(store);
+        sendJson(res, 200, stats);
       } catch (error) {
         sendJson(res, 400, { error: `Stats could not be loaded. ${error.message}` });
       }
