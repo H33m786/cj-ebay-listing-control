@@ -34,10 +34,30 @@ test("market comparison flags an overpriced thin listing", () => {
   const result = compareDraftToMarket(draft, competitors);
   assert.equal(result.pricePosition, "High");
   assert.ok(result.score < 50);
+  assert.ok(result.scoreBreakdown.price < 50);
   assert.equal(result.checklist.items.length, 7);
   assert.ok(result.suggestedTitle.includes("USB"));
   assert.ok(result.recommendations.some((item) => item.includes("20% above")));
   assert.ok(result.recommendations.some((item) => item.includes("at least 3 clear product images")));
+});
+
+test("market comparison score changes with listing quality instead of sticking to one penalty total", () => {
+  const competitors = [
+    { title: "USB C Fast Charger Plug 20W UK Adapter", price: 12.99, currency: "GBP" },
+    { title: "USB Type C Charger Fast Plug For Phone", price: 14.49, currency: "GBP" },
+    { title: "Fast USB-C Phone Charger Adapter", price: 15.99, currency: "GBP" }
+  ];
+  const thin = compareDraftToMarket(draft, competitors);
+  const improved = compareDraftToMarket({
+    ...draft,
+    title: "USB C Fast Charger Plug 20W UK Adapter For iPhone Samsung Phone",
+    itemSpecifics: { Brand: "Unbranded", Type: "Charger", Colour: "White", "Compatible Brand": "Universal", "Number of Ports": "1", Connectivity: "USB-C" },
+    supplierImages: ["https://example.com/2.jpg", "https://example.com/3.jpg", "https://example.com/4.jpg"],
+    deliveryDays: 8
+  }, competitors);
+  assert.ok(improved.score > thin.score);
+  assert.notEqual(improved.score, thin.score);
+  assert.ok(improved.scoreBreakdown.listingQuality > thin.scoreBreakdown.listingQuality);
 });
 
 test("pre-publish checklist scores strong listing inputs higher", () => {

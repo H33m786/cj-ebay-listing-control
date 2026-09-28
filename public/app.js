@@ -21,6 +21,7 @@ const state = {
   selectedPublishedId: null,
   publishedSales: null,
   publishedSalesError: "",
+  cjLinkDetails: {},
   stats: null,
   statsError: "",
   statsDays: "all",
@@ -751,7 +752,11 @@ async function localApi(path, options, originalError) {
     return { draft, validation: validateClient(draft) };
   }
 
-  const publishedMatch = url.pathname.match(/^\/api\/published\/([^/]+)(?:\/(promotion-recommendation|promote))?$/);
+  if (url.pathname === "/api/cj/product-detail") {
+    throw new Error("Open the local desktop app to fetch live CJ variants.");
+  }
+
+  const publishedMatch = url.pathname.match(/^\/api\/published\/([^/]+)(?:\/(promotion-recommendation|promote|cj-link))?$/);
   if (publishedMatch && options.method === "POST" && publishedMatch[2] === "promotion-recommendation") {
     const id = decodeURIComponent(publishedMatch[1]);
     const item = store.published.find((published) => published.id === id);
@@ -799,6 +804,10 @@ async function localApi(path, options, originalError) {
     store.published[index].ebayPromotionPriceUpdate = { status: "simulated", at: new Date().toISOString(), rows: [] };
     writeHostedStore(store);
     return { published: store.published[index], promotion: { campaignId: store.published[index].ebayPromotionCampaignId, bidPercentage: rate }, priceUpdate: store.published[index].ebayPromotionPriceUpdate };
+  }
+
+  if (publishedMatch && options.method === "POST" && publishedMatch[2] === "cj-link") {
+    throw new Error("Open the local desktop app to link live CJ landed costs.");
   }
 
   if (publishedMatch && !publishedMatch[2] && options.method === "PATCH") {
@@ -1333,6 +1342,7 @@ function marketCheckMarkup(market = null, draft = null) {
         <div class="metric"><span>Images</span><strong>${escapeHtml(market.imageCount ?? 0)}</strong></div>
         <div class="metric"><span>Specifics</span><strong>${escapeHtml(market.specificsCount ?? 0)}</strong></div>
       </div>
+      ${market.scoreBreakdown ? `<h3>Score breakdown</h3><div class="metrics">${Object.entries(market.scoreBreakdown).map(([key, value]) => `<div class="metric"><span>${escapeHtml(key.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase()))}</span><strong>${escapeHtml(value)}/100</strong></div>`).join("")}</div>` : ""}
       <h3>Recommended fixes</h3>
       <ul>${(market.recommendations || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
       ${competitors.length ? `
@@ -2158,6 +2168,7 @@ function renderPublished() {
   list.innerHTML = state.published.map((item) => {
     const row = mainPublishedRow(item);
     const pricing = draftPricing(row);
+    const costLabel = publishedNeedsCjCost(item) ? "CJ cost missing" : `${money(pricing.margin)} margin`;
     const listingId = String(item.ebayListingId || "");
     const listingUrl = ebayListingUrl(item);
     return `
@@ -2165,7 +2176,7 @@ function renderPublished() {
         ${productVisual(item)}
         <span>
           <strong>${escapeHtml(item.title)}</strong>
-          <span class="meta">${escapeHtml(row.sku || item.sku)} / ${money(row.salePrice)} / ${money(pricing.margin)} margin</span>
+          <span class="meta">${escapeHtml(row.sku || item.sku)} / ${money(row.salePrice)} / ${escapeHtml(costLabel)}</span>
           <span class="meta">eBay listing: ${escapeHtml(listingId || "Not returned")}${listingUrl ? ` / Open in detail` : ""}</span>
         </span>
         <span class="badge ${item.status === "withdrawn" ? "badge-muted" : ""}">${publishedModeLabel(item)}</span>
@@ -2283,6 +2294,31 @@ function mainPublishedRow(item) {
   return row;
 }
 
+function rowHasLandedCost(row = {}) {
+  const currency = row.costCurrency || "GBP";
+  const hasCosts = Number.isFinite(Number(row.cost)) && Number.isFinite(Number(row.shippingCost));
+  const hasRate = currency === "GBP" || (Number.isFinite(Number(row.usdToGbp)) && Number(row.usdToGbp) > 0);
+  return hasCosts && hasRate;
+}
+
+function publishedNeedsCjCost(item) {
+  if (!item) return false;
+  const recovered = item.recoveredNeedsCjLink === true || item.source === "ebay-recovered" || item.recoverySource;
+  if (!recovered) return false;
+  const rows = item.multiVariation ? (item.listingVariants || []) : [item];
+  return rows.some((row) => {
+    const merged = { ...item, ...row, costCurrency: row.costCurrency || item.costCurrency, usdToGbp: row.usdToGbp || item.usdToGbp };
+    const placeholderCost = !row.cjVariantId && Number(row.cost || 0) === 0 && Number(row.shippingCost || 0) === 0;
+    return placeholderCost || !rowHasLandedCost(merged);
+  });
+}
+
+function publishedRowLandedText(item, row) {
+  const merged = { ...item, ...row, costCurrency: row.costCurrency || item.costCurrency, usdToGbp: row.usdToGbp || item.usdToGbp, multiVariation: false };
+  const placeholderCost = (item.recoveredNeedsCjLink || item.source === "ebay-recovered") && !row.cjVariantId && Number(row.cost || 0) === 0 && Number(row.shippingCost || 0) === 0;
+  return placeholderCost || !rowHasLandedCost(merged) ? "Missing" : money(draftPricing(merged).landedCost);
+}
+
 function latestPromotionPriceRow(item, row = {}) {
   const rows = Array.isArray(item.ebayPromotionPriceUpdate?.rows) ? item.ebayPromotionPriceUpdate.rows : [];
   if (!rows.length) return null;
@@ -2328,6 +2364,8 @@ function renderPublishedDetail(item) {
         </div>
         ${listingUrl ? `<a class="detail-link" href="${escapeAttr(listingUrl)}" target="_blank" rel="noreferrer">Open on eBay</a>` : ""}
       </div>
+
+      ${renderPublishedCjLink(item, rows)}
 
       <section class="detail-section">
         <h4>Pricing breakdown</h4>
@@ -2415,6 +2453,7 @@ function renderPublishedDetail(item) {
   if (recommendPromotionButton) recommendPromotionButton.addEventListener("click", () => recommendPublishedPromotion(item.id));
   const applyPromotionButton = $("#applyPromotionButton");
   if (applyPromotionButton) applyPromotionButton.addEventListener("click", () => applyPublishedPromotion(item.id));
+  bindPublishedCjLink(item);
 }
 
 function promotionPriceUpdateLabel(item) {
@@ -2451,6 +2490,101 @@ function renderPublishedVariants(item, rows) {
       </div>
     </section>
   `;
+}
+
+function renderPublishedCjLink(item, rows) {
+  const needsCost = publishedNeedsCjCost(item);
+  const detail = state.cjLinkDetails[item.id];
+  const variants = detail?.variants || [];
+  const currentProductId = detail?.pid || item.cjProductId || "";
+  const options = (selected) => [
+    `<option value="">Choose CJ variant</option>`,
+    ...variants.map((variant) => `<option value="${escapeAttr(variant.id)}" ${variant.id === selected ? "selected" : ""}>${escapeHtml(variant.label || variant.sku || variant.id)}${variant.price != null ? ` - ${money(variant.price, "USD")}` : ""}</option>`)
+  ].join("");
+  const rowList = item.multiVariation ? (item.listingVariants || []) : [item];
+  const linkRows = rowList.map((row, index) => `
+    <tr>
+      <td>${escapeHtml(row.label || row.sku || `Row ${index + 1}`)}</td>
+      <td>${money(row.salePrice)}</td>
+      <td>${publishedRowLandedText(item, row)}</td>
+      <td><select name="variant.${index}" ${variants.length ? "" : "disabled"}>${options(row.cjVariantId || (variants.length === 1 ? variants[0].id : ""))}</select></td>
+    </tr>
+  `).join("");
+  const linkedText = needsCost
+    ? "This listing was recovered from eBay, so CJ item and shipping costs are missing. Link the matching CJ product to show landed price and margin."
+    : "CJ landed costs are saved for this listing. You can relink if the current CJ product/variant match is wrong.";
+  return `
+    <section class="detail-section cj-link-section ${needsCost ? "needs-link" : ""}">
+      <div class="published-detail-header">
+        <div>
+          <h4>CJ landed cost reference</h4>
+          <p class="meta">${escapeHtml(linkedText)}</p>
+        </div>
+        ${item.cjLinkedAt ? `<span class="badge">Linked ${new Date(item.cjLinkedAt).toLocaleDateString("en-GB")}</span>` : needsCost ? '<span class="badge badge-muted">CJ cost missing</span>' : ""}
+      </div>
+      <form id="publishedCjLinkForm" class="cj-link-form">
+        <label>CJ product ID <input name="cjProductId" value="${escapeAttr(currentProductId)}" placeholder="Example: CJYD2256001" /></label>
+        <label>UK postcode for quotes <input name="quotePostcode" value="${escapeAttr(item.quotePostcode || "")}" placeholder="Optional" /></label>
+        <label>GBP per USD <input name="usdToGbp" type="number" step="0.0001" min="0" value="${escapeAttr(item.usdToGbp || "")}" placeholder="Auto if blank" /></label>
+        <div class="promotion-actions">
+          <button type="button" class="secondary" id="loadCjProductForPublished">Fetch CJ variants</button>
+          <button type="submit" ${variants.length ? "" : "disabled"}>Save landed costs</button>
+        </div>
+        ${detail?.title ? `<p class="inline-status">Loaded: ${escapeHtml(detail.title)} / ${variants.length} CJ variant${variants.length === 1 ? "" : "s"} found.</p>` : ""}
+        <div class="detail-table-wrap">
+          <table class="detail-table">
+            <thead><tr><th>eBay row</th><th>Current eBay price</th><th>Landed now</th><th>Matching CJ variant</th></tr></thead>
+            <tbody>${linkRows}</tbody>
+          </table>
+        </div>
+        <p class="inline-status" id="publishedCjLinkStatus">${needsCost ? "Fetch the CJ variants, match each eBay row, then save landed costs." : ""}</p>
+      </form>
+    </section>
+  `;
+}
+
+function bindPublishedCjLink(item) {
+  const form = $("#publishedCjLinkForm");
+  if (!form) return;
+  $("#loadCjProductForPublished")?.addEventListener("click", async () => {
+    const status = $("#publishedCjLinkStatus");
+    const pid = String(form.elements.cjProductId.value || "").trim();
+    if (!pid) {
+      status.textContent = "Paste the CJ product ID first.";
+      return;
+    }
+    status.textContent = "Fetching CJ variants...";
+    try {
+      state.cjLinkDetails[item.id] = await api(`/api/cj/product-detail?pid=${encodeURIComponent(pid)}`);
+      renderPublished();
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const status = $("#publishedCjLinkStatus");
+    const submit = form.querySelector('button[type="submit"]');
+    const formData = new FormData(form);
+    const rowList = item.multiVariation ? (item.listingVariants || []) : [item];
+    const body = {
+      cjProductId: String(formData.get("cjProductId") || "").trim(),
+      quotePostcode: String(formData.get("quotePostcode") || "").trim(),
+      usdToGbp: formData.get("usdToGbp") === "" ? null : Number(formData.get("usdToGbp")),
+      variantLinks: rowList.map((row, index) => ({ index, sku: row.sku || "", label: row.label || "", cjVariantId: String(formData.get(`variant.${index}`) || "").trim() }))
+    };
+    submit.disabled = true;
+    status.textContent = "Saving CJ landed costs...";
+    try {
+      const result = await api(`/api/published/${encodeURIComponent(item.id)}/cj-link`, { method: "POST", body: JSON.stringify(body) });
+      const index = state.published.findIndex((published) => published.id === item.id);
+      if (index >= 0) state.published[index] = result.published;
+      renderPublished();
+    } catch (error) {
+      status.textContent = error.message;
+      submit.disabled = false;
+    }
+  });
 }
 
 function publishedSalesFor(item) {

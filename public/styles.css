@@ -1145,6 +1145,32 @@ dd {
   grid-column: 1 / -1;
 }
 
+.cj-link-section.needs-link {
+  border-top-color: var(--warning);
+}
+
+.cj-link-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(220px, auto);
+  gap: 12px;
+  align-items: end;
+}
+
+.cj-link-form label {
+  min-width: 0;
+}
+
+.cj-link-form input,
+.cj-link-form select {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.cj-link-form .detail-table-wrap,
+.cj-link-form .inline-status {
+  grid-column: 1 / -1;
+}
+
 .detail-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

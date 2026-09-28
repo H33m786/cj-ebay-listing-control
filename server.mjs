@@ -2245,6 +2245,113 @@ async function cjProductDetail(pid, token) {
   });
 }
 
+function normalizeCjDetailVariant(variant = {}) {
+  const id = variant.vid || variant.variantId || variant.id || "";
+  return {
+    id,
+    label: variant.variantKey || variant.variantNameEn || variant.variantName || variant.variantSku || id,
+    sku: variant.variantSku || "",
+    image: variant.variantImage || variant.variantImg || "",
+    price: variant.variantSellPrice == null || variant.variantSellPrice === "" ? null : Number(variant.variantSellPrice)
+  };
+}
+
+async function cjProductDetailSummary(pid) {
+  if (!pid) throw new Error("Enter a CJ product ID first.");
+  const token = await getUsableCjToken();
+  const detail = await cjProductDetail(pid, token);
+  const data = detail.data || {};
+  return {
+    pid: data.pid || data.productId || pid,
+    title: data.productNameEn || data.productName || data.title || pid,
+    image: imageUrlList(data.productImage, data.productImageSet, data.productImageUrls, data.image)[0] || "",
+    variants: (data.variants || data.variantList || []).map(normalizeCjDetailVariant).filter((variant) => variant.id)
+  };
+}
+
+function chooseQuoteForLink(quotes = [], preferredName = "") {
+  return quotes.find((item) => item.name === preferredName)
+    || quotes.find((item) => /yunexpress ordinary|cjpacket ordinary|luwei ordinary/i.test(item.name))
+    || quotes.slice().sort((a, b) => Number(a.price) - Number(b.price))[0]
+    || null;
+}
+
+async function linkPublishedListingToCj(listing, input = {}) {
+  const cjProductId = String(input.cjProductId || "").trim();
+  if (!cjProductId) throw new Error("Enter the matching CJ product ID.");
+  const rawLinks = Array.isArray(input.variantLinks) ? input.variantLinks : [];
+  const rows = listing.multiVariation ? (listing.listingVariants || []) : [listing];
+  const links = rows.map((row, index) => ({
+    index,
+    cjVariantId: String(rawLinks.find((link) => Number(link.index) === index)?.cjVariantId || input.cjVariantId || row.cjVariantId || "").trim()
+  }));
+  const selectedIds = [...new Set(links.map((link) => link.cjVariantId).filter(Boolean))];
+  if (!selectedIds.length) throw new Error("Choose at least one CJ variant to link.");
+
+  const [quoteResult, fx] = await Promise.all([
+    cjVariantPriceQuotes({ pid: cjProductId, vids: selectedIds, postcode: input.quotePostcode || listing.quotePostcode || "" }),
+    fetchUsdToGbpRate().catch(() => null)
+  ]);
+  const quotesByVariant = new Map((quoteResult.results || []).map((result) => [String(result.variantId), result]));
+  const usdToGbp = Number(input.usdToGbp || fx?.rate || listing.usdToGbp);
+  const shippingPreference = String(input.cjShippingService || listing.cjShippingService || "").trim();
+  const now = new Date().toISOString();
+  const next = {
+    ...listing,
+    source: "cj",
+    cjProductId,
+    costCurrency: "USD",
+    usdToGbp: Number.isFinite(usdToGbp) && usdToGbp > 0 ? usdToGbp : listing.usdToGbp,
+    quotePostcode: String(input.quotePostcode || listing.quotePostcode || "").trim(),
+    pricingReviewed: true,
+    recoveredNeedsCjLink: false,
+    cjLinkedAt: now,
+    updatedAt: now
+  };
+
+  const applyLink = (row, link) => {
+    if (!link.cjVariantId) return { ...row, quoteError: "No CJ variant selected.", pricingReviewed: false };
+    const result = quotesByVariant.get(link.cjVariantId);
+    if (!result || result.error) {
+      return { ...row, cjProductId, cjVariantId: link.cjVariantId, quoteError: result?.error || "CJ quote failed.", pricingReviewed: false };
+    }
+    const quote = chooseQuoteForLink(result.quotes || [], row.cjShippingService || shippingPreference);
+    return {
+      ...row,
+      cjProductId,
+      cjVariantId: link.cjVariantId,
+      cost: result.cost,
+      shippingCost: quote ? quote.price : null,
+      costCurrency: result.currency || "USD",
+      usdToGbp: next.usdToGbp,
+      cjShippingService: quote?.name || "",
+      quotePostcode: next.quotePostcode,
+      quoteError: quote ? "" : result.shippingError || "CJ returned no shipping option for this variant.",
+      pricingReviewed: Boolean(quote && next.usdToGbp),
+      linkedFromRecoveredListing: true
+    };
+  };
+
+  if (next.multiVariation) {
+    next.listingVariants = (next.listingVariants || []).map((row, index) => applyLink(row, links[index] || {}));
+    const mainRow = listingRows(next)[mainListingRowIndex(next)] || next.listingVariants.find((row) => row.cjVariantId) || {};
+    Object.assign(next, {
+      cjVariantId: mainRow.cjVariantId || next.cjVariantId,
+      cost: mainRow.cost ?? next.cost,
+      shippingCost: mainRow.shippingCost ?? next.shippingCost,
+      cjShippingService: mainRow.cjShippingService || next.cjShippingService || shippingPreference
+    });
+  } else {
+    Object.assign(next, applyLink(next, links[0] || {}));
+  }
+
+  const linkedRows = next.multiVariation ? next.listingVariants : [next];
+  const missing = linkedRows.filter((row) => !Number.isFinite(Number(row.cost)) || !Number.isFinite(Number(row.shippingCost)) || !Number.isFinite(Number(row.usdToGbp)));
+  next.pricingReviewed = missing.length === 0;
+  next.recoveredNeedsCjLink = missing.length > 0;
+  return { listing: next, quotes: quoteResult.results || [], usdToGbp: next.usdToGbp };
+}
+
 async function cjQuoteVariant(input, token, variant) {
   if (!variant || variant.variantSellPrice == null || variant.variantSellPrice === "" || !Number.isFinite(Number(variant.variantSellPrice))) throw new Error("CJ did not return a price for this variant.");
   const freight = await cjApiJson("https://developers.cjdropshipping.com/api2.0/v1/logistic/freightCalculate", {
@@ -2355,6 +2462,14 @@ async function handleApi(req, res, url) {
     }
     if (req.method === "POST" && url.pathname === "/api/cj/variant-price-quotes") {
       sendJson(res, 200, await cjVariantPriceQuotes(await readBody(req)));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/cj/product-detail") {
+      try {
+        sendJson(res, 200, await cjProductDetailSummary(url.searchParams.get("pid") || ""));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/ebay/locations/cj-jinhua") {
@@ -2539,7 +2654,7 @@ async function handleApi(req, res, url) {
       return;
     }
 
-    const publishedMatch = url.pathname.match(/^\/api\/published\/([^/]+)(?:\/(withdraw|promotion-recommendation|promote))?$/);
+    const publishedMatch = url.pathname.match(/^\/api\/published\/([^/]+)(?:\/(withdraw|promotion-recommendation|promote|cj-link))?$/);
     if (publishedMatch && (req.method === "PATCH" || req.method === "POST")) {
       const store = await readStore();
       const id = decodeURIComponent(publishedMatch[1]);
@@ -2621,6 +2736,19 @@ async function handleApi(req, res, url) {
           store.published[index] = next;
           await saveStore(store);
           sendJson(res, 200, { published: next, promotion, priceUpdate: next.ebayPromotionPriceUpdate });
+        } catch (error) {
+          sendJson(res, 400, { error: error.message });
+        }
+        return;
+      }
+
+      if (req.method === "POST" && action === "cj-link") {
+        try {
+          const body = await readBody(req);
+          const result = await linkPublishedListingToCj(store.published[index], body);
+          store.published[index] = result.listing;
+          await saveStore(store);
+          sendJson(res, 200, { published: result.listing, quotes: result.quotes, usdToGbp: result.usdToGbp });
         } catch (error) {
           sendJson(res, 400, { error: error.message });
         }

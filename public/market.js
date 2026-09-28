@@ -7,6 +7,10 @@ function round(value) {
   return Number(value.toFixed(2));
 }
 
+function clamp(value, min = 0, max = 100) {
+  return Math.max(min, Math.min(max, value));
+}
+
 function words(value) {
   return String(value || "").toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2 && !stopWords.has(word));
 }
@@ -136,44 +140,50 @@ export function compareDraftToMarket(draft, competitors = []) {
   const keywordScore = titleKeywordScore(draft, competitors);
   const checklist = prePublishChecklist(draft, competitors);
   const recommendations = [];
-  let score = competitors.length ? 72 : 50;
+  const priceScore = !medianPrice || !Number.isFinite(salePrice) || salePrice <= 0
+    ? 45
+    : salePrice <= lowPrice
+      ? 96
+      : salePrice <= medianPrice
+        ? 88
+        : salePrice <= medianPrice * 1.08
+          ? 72
+          : salePrice <= medianPrice * 1.2
+            ? 52
+            : clamp(42 - Math.min(32, (salePrice / medianPrice - 1.2) * 40));
+  const demandConfidence = competitors.length >= 6 ? 100 : competitors.length ? 65 + competitors.length * 5 : 35;
+  const score = Math.round(
+    checklist.score * 0.56
+    + priceScore * 0.26
+    + demandConfidence * 0.12
+    + clamp(keywordScore || (competitors.length ? 0 : 45)) * 0.06
+  );
 
   if (!competitors.length) recommendations.push("No close eBay examples were found. Try a broader title or category search before judging demand.");
   if (!Number.isFinite(salePrice) || salePrice <= 0) {
-    score -= 25;
     recommendations.push("Set a valid eBay sale price before comparing against the market.");
   } else if (medianPrice && salePrice > medianPrice * 1.2) {
-    score -= 24;
     recommendations.push(`Your price is more than 20% above the market median of GBP ${medianPrice.toFixed(2)}. Check whether shipping or profit target is too high.`);
   } else if (medianPrice && salePrice > medianPrice * 1.08) {
-    score -= 12;
     recommendations.push(`Your price is slightly above the market median of GBP ${medianPrice.toFixed(2)}. Consider trimming profit or improving images/specifics.`);
-  } else if (lowPrice && salePrice <= lowPrice) {
-    score += 8;
   }
 
   if (titleLength < 55) {
-    score -= 10;
     recommendations.push("Add more buyer search terms to the title, such as product type, colour, size, material, compatibility or use case.");
   }
   if (keywordScore < 35 && competitors.length) {
-    score -= 12;
     recommendations.push("Your title does not share many keywords with similar eBay listings. Reuse natural buyer terms from the examples below.");
   }
   if (images < 3) {
-    score -= 12;
     recommendations.push("Use at least 3 clear product images. The first image should show the exact item on a plain background.");
   }
   if (specificsCount < 5) {
-    score -= 10;
     recommendations.push("Fill more item specifics. eBay search relies heavily on category specifics and filters.");
   }
   if (Number(draft.deliveryDays) > 10) {
-    score -= 10;
     recommendations.push("Delivery is slower than many UK buyers expect. Make the estimate honest, but consider faster CJ services for competitive products.");
   }
   if (pricing.margin != null && pricing.margin < Number(draft.targetProfitGbp ?? 5) && (draft.priceTargetType || "fixed") !== "percent") {
-    score -= 6;
     recommendations.push("Expected profit is below your target after fees. Save the draft to refresh the calculated price.");
   }
 
@@ -181,7 +191,13 @@ export function compareDraftToMarket(draft, competitors = []) {
   const pricePosition = !medianPrice || !Number.isFinite(salePrice) ? "Unknown" : salePrice <= lowPrice ? "Low" : salePrice <= medianPrice ? "Competitive" : salePrice <= highPrice ? "Above median" : "High";
 
   return {
-    score: Math.max(0, Math.min(100, Math.round(score))),
+    score: clamp(score),
+    scoreBreakdown: {
+      listingQuality: checklist.score,
+      price: Math.round(priceScore),
+      demandConfidence: Math.round(demandConfidence),
+      keywordMatch: Math.round(keywordScore || 0)
+    },
     pricePosition,
     query: marketSearchTerm(draft),
     competitorCount: competitors.length,
