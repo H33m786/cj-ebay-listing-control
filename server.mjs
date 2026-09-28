@@ -1,4 +1,5 @@
 import http from "node:http";
+import { discoverySettings, ebayFirstResearch } from "./research-ebay-first.mjs";
 import { eligibleResearchQuote, researchCostEstimate } from "./research-policy.mjs";
 import { previewResearchCsv, normalizeResearchIdea, mergeResearchIdeas, researchMedian } from "./research-import.mjs";
 import { publishingSetup } from "./ebay-setup.mjs";
@@ -993,6 +994,26 @@ const researchMinimumProfitGbp = 1;
 const researchMedianAllowance = 1.05;
 
 async function researchOpportunities(url) {
+  if (url.searchParams.get("mode") === "ebay-first" && !url.searchParams.get("ideaId")) {
+    if (process.env.CJ_USE_LIVE !== "true") throw new Error("Connect live CJ before finding eBay-first opportunities.");
+    const settings = discoverySettings(url.searchParams);
+    const keyword = url.searchParams.get("keyword")?.trim();
+    const terms = keyword ? [keyword] : researchSeeds[url.searchParams.get("category")] || researchSeeds.trending;
+    const token = await getEbayAppToken();
+    const fx = await fetchUsdToGbpRate();
+    const store = await readStore();
+    return ebayFirstResearch({ terms, settings,
+      existing: [...(store.drafts || []), ...(store.published || []).filter((item) => item.status !== "withdrawn")],
+      searchEbay: (term) => searchEbayMarket(term, token),
+      searchCj: async (term) => {
+        const query = new URL("http://local/api/products");
+        query.searchParams.set("keyword", term);
+        return (await fetchCjProducts(query)).products || [];
+      },
+      quote: (product, price, options) => researchViabilityForProduct(product, price, fx, options),
+      match: titleMatchScore
+    });
+  }
   const keyword = url.searchParams.get("keyword")?.trim() || "";
   const ideaId = url.searchParams.get("ideaId");
   const evidence = ideaId ? (await readResearchIdeas()).find((idea) => idea.id === ideaId) : null;
@@ -2934,6 +2955,10 @@ async function handleApi(req, res, url) {
       const body = await readBody(req);
       const product = await enrichProductForDraft(body.product);
       const draft = makeDraftFromProduct(product);
+      if (body.researchTargetProfitGbp != null) {
+        const settings = discoverySettings(new URLSearchParams({ profit: String(body.researchTargetProfitGbp) }));
+        Object.assign(draft, { priceTargetType: "fixed", targetProfitGbp: settings.targetProfitGbp, pricingReviewed: false });
+      }
       if (body.researchIdeaId) {
         const idea = (await readResearchIdeas()).find((entry) => entry.id === body.researchIdeaId);
         if (!idea) throw new Error("The research reference was removed. Refresh the shortlist.");
