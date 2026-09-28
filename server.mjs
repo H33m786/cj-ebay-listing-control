@@ -1,4 +1,5 @@
 import http from "node:http";
+import { createCjRequester } from "./cj-request.mjs";
 import { discoverySettings, ebayFirstResearch } from "./research-ebay-first.mjs";
 import { eligibleResearchQuote, researchCostEstimate } from "./research-policy.mjs";
 import { previewResearchCsv, normalizeResearchIdea, mergeResearchIdeas, researchMedian } from "./research-import.mjs";
@@ -954,12 +955,9 @@ async function fetchCjProductPage(cjAccessToken, { keyword = "", page = 1, size 
   cjUrl.searchParams.set("page", String(page));
   cjUrl.searchParams.set("size", String(size));
   if (keyword) cjUrl.searchParams.set("keyWord", keyword);
-  const response = await fetch(cjUrl, {
-    signal: AbortSignal.timeout(12000),
+  const body = await cjApiJson(cjUrl, {
     headers: { "CJ-Access-Token": cjAccessToken }
   });
-  if (!response.ok) throw new Error(`CJ API failed with ${response.status}`);
-  const body = await response.json();
   return { products: cjProductListFromResponse(body.data), total: cjProductTotalFromResponse(body.data) };
 }
 
@@ -2360,27 +2358,7 @@ async function cjPriceQuote(input) {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function cjRateLimited(response, data) {
-  const message = String(data?.message || data?.error || "");
-  return response.status === 429 || /too many requests|rate limit|too frequent|frequent request/i.test(message);
-}
-
-async function cjApiJson(url, options = {}, { attempts = 4, timeoutMs = 20000 } = {}) {
-  let lastError;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const response = await fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
-    const data = await response.json().catch(() => ({}));
-    if (response.ok && data.code === 200) return data;
-    const message = data.message || data.error || `CJ API failed with ${response.status}`;
-    lastError = new Error(message);
-    if (attempt < attempts - 1 && cjRateLimited(response, data)) {
-      await wait(1500 * (attempt + 1));
-      continue;
-    }
-    throw lastError;
-  }
-  throw lastError || new Error("CJ API failed.");
-}
+const cjApiJson = createCjRequester();
 
 async function cjProductDetail(pid, token) {
   return cjApiJson(`https://developers.cjdropshipping.com/api2.0/v1/product/query?pid=${encodeURIComponent(pid)}`, {
