@@ -10,7 +10,7 @@ import { recoveredListingCandidates, browseListingCandidates, mergeRecoveredList
 import { readFile as readLocalFile, mkdir, stat } from "node:fs/promises";
 import { createStorage } from "./storage.mjs";
 import { createAccessGuard } from "./access.mjs";
-import { accountRequestUrl, ebayErrorMessage } from "./ebay-request.mjs";
+import { accountRequestUrl, ebayErrorMessage, requestEbayJson } from "./ebay-request.mjs";
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./public/pricing.js";
 import { compareDraftToMarket, marketSearchTerm } from "./public/market.js";
 import { optimizeDraft } from "./public/optimizer.js";
@@ -2029,8 +2029,7 @@ async function getEbayAppToken() {
 async function ebayApi(pathname, token, options = {}) {
   const marketplaceId = ebayMarketplaceId();
   const url = accountRequestUrl(pathname, ebayApiBaseUrl(), marketplaceId, options.method || "GET");
-  const response = await fetch(url, {
-    signal: AbortSignal.timeout(20000),
+  const { response, body } = await requestEbayJson(url, {
     method: options.method || "GET",
     headers: {
       authorization: `Bearer ${token.access_token}`,
@@ -2042,9 +2041,6 @@ async function ebayApi(pathname, token, options = {}) {
     },
     body: options.body ? JSON.stringify(options.body) : undefined
   });
-  const text = await response.text();
-  const body = text ? JSON.parse(text) : {};
-  if (!response.ok) throw new Error(ebayErrorMessage(body, response.status));
   if (options.includeHeaders) {
     return {
       body,
