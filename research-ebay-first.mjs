@@ -1,6 +1,36 @@
 import { marketSearchTerm } from "./public/market.js";
 import { researchMedian } from "./research-import.mjs";
 
+function matchingText(title) {
+  return String(title || "").toLowerCase()
+    .replace(/\b(?:usb[ -]?c|type[ -]?c)\b/g, "usbc")
+    .replace(/\b(\d+)\s*(?:watts?|w)\b/g, "$1w")
+    .replace(/\b(?:power adapter|charging adapter|charging head|charging plug|wall adapter)\b/g, "charger")
+    .replace(/\bchargers\b/g, "charger");
+}
+
+export function discoveryMatch(source, candidate, fallback) {
+  const left = matchingText(source);
+  const right = matchingText(candidate);
+  if (/\bcharger\b/.test(left)) {
+    const cableOnly = (text) => /\bcables?\b/.test(text) && !/\b(?:wall|plug|adapter|head|wireless)\b/.test(text);
+    if (cableOnly(left) || cableOnly(right)) return { score: 0, reason: "Cable or ambiguous cable bundle: not a confirmed charger comparison." };
+    if (/\bpower\s*bank\b/.test(left) !== /\bpower\s*bank\b/.test(right)) return { score: 0, reason: "Power bank and mains charger are different products." };
+    if (!/\bcharger\b/.test(right)) return { score: 0, reason: "Product type differs: looking for a charger, not a cable or accessory." };
+    const kind = (text) => /\b(?:wireless|qi|magsafe)\b/.test(text) ? "wireless" : /\bcar\b/.test(text) ? "car" : "wired";
+    if (kind(left) !== kind(right)) return { score: 0, reason: "Different charger type (wired, wireless or car)." };
+    if (/\bcar\b/.test(left) !== /\bcar\b/.test(right)) return { score: 0, reason: "Car and non-car chargers are not comparable." };
+    const power = (text) => [...text.matchAll(/\b(\d+)w\b/g)].map((value) => value[1]);
+    const a = power(left);
+    const b = power(right);
+    if (a.length && b.length && !a.some((value) => b.includes(value))) return { score: 0, reason: `Different stated power: ${a.join("/")}W versus ${b.join("/")}W.` };
+    // Product type is a discovery signal, not confirmation of compatibility or safety.
+    return { score: 0.7, reason: "Potential charger match; verify connector, plug, power, certification and pack quantity." };
+  }
+  const score = fallback(discoveryTerm(left), discoveryTerm(right));
+  return { score, reason: "Needs review: product wording does not establish a comparable item." };
+}
+
 export function discoveryTerm(title) {
   const cleaned = String(title || "").replace(/\b(genuine|original|premium|brand new|free delivery|free postage|fast dispatch|best seller|sale|hot)\b/gi, " ");
   return marketSearchTerm({ title: cleaned });
@@ -39,10 +69,10 @@ export async function ebayFirstResearch({ terms, settings, existing = [], search
         if (searches.has(term)) continue;
         if (searches.size >= 6) break;
         searches.add(term);
-        let peers = ebayItems.filter((item) => match(term, discoveryTerm(item.title)) >= 0.6);
+        let peers = ebayItems.filter((item) => discoveryMatch(source.title, item.title, match).score >= 0.6);
         if (peers.length < 3 && term !== niche.toLowerCase().trim()) {
           const focused = await searchEbay(term);
-          peers = focused.filter((item) => delivered(item) && match(term, discoveryTerm(item.title)) >= 0.6);
+          peers = focused.filter((item) => delivered(item) && discoveryMatch(source.title, item.title, match).score >= 0.6);
         }
         const medianPrice = researchMedian(peers);
         const group = { term, medianPrice, ebayItems: peers.slice(0, 3), cjCount: 0, viableCount: 0, rejectedByPrice: 0 };
@@ -55,9 +85,10 @@ export async function ebayFirstResearch({ terms, settings, existing = [], search
           const id = String(product.pid || product.cjProductId || "");
           if (!id || seen.has(id)) continue;
           if (known.has(id)) { alreadyAdded += 1; seen.add(id); continue; }
-          if (match(term, discoveryTerm(product.title)) < 0.6) {
+          const similarity = discoveryMatch(source.title, product.title, match);
+          if (similarity.score < 0.6) {
             group.rejectedByPrice += 1;
-            excluded.push({ title: product.title, term, reason: "Needs review: title does not match closely enough." });
+            excluded.push({ title: product.title, term, reason: similarity.reason });
             continue;
           }
           if (quoted >= 12) { group.note = "12 shipping checks completed. More candidates need checking."; break; }
@@ -79,7 +110,7 @@ export async function ebayFirstResearch({ terms, settings, existing = [], search
               comparisonBasis: "Similar active listings: delivered median",
               priceHeadroom: Number((medianPrice - costs.minimumSalePrice).toFixed(2)),
               medianGapPercent: Number(((costs.minimumSalePrice / medianPrice - 1) * 100).toFixed(1)),
-              caution: "Potential match, not verified sales demand. Check specifications, pack quantity and variant before publishing."
+              caution: "Potential match, not verified sales demand. Check specifications, plug, power, certification, pack quantity and variant before publishing."
             });
           } catch (error) { warnings.push(`${product.title}: ${error.message}`); excluded.push({ title: product.title, term, reason: error.message }); }
         }

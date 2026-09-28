@@ -1,6 +1,29 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { discoveryTerm, discoverySettings, ebayFirstResearch } from "./research-ebay-first.mjs";
+import { discoveryMatch, discoveryTerm, discoverySettings, ebayFirstResearch } from "./research-ebay-first.mjs";
+
+test("charger synonyms and specifications beyond truncated title words can match", () => {
+  const match = discoveryMatch("20W USB-C Fast Charger For iPhone Samsung", "European Home Portable Mobile Phone Travel 20 Watts Type C Charging Head", () => 0);
+  assert.ok(match.score >= 0.6);
+});
+
+test("charger matching rejects incompatible types, cables and stated wattages", () => {
+  for (const candidate of ["65W USB-C wall charger", "20W USB-C car charger", "20W wireless charger", "USB charger cable", "USB-C charging cable", "20W power bank charger"]) {
+    const match = discoveryMatch("20W USB-C wall charger", candidate, () => 1);
+    assert.equal(match.score, 0, candidate);
+    assert.ok(match.reason);
+  }
+});
+
+test("real title matching lets equivalent CJ chargers reach shipping checks", async () => {
+  const result = await ebayFirstResearch(options({
+    searchEbay: async () => peers.map((item) => ({ ...item, title: "20W USB-C Fast Charger For iPhone Samsung" })),
+    searchCj: async () => [{ pid: "charger", title: "Travel Type C 20 Watts Charging Head" }],
+    match: () => 0
+  }));
+  assert.equal(result.quoted, 1);
+  assert.equal(result.recommendations.length, 1);
+});
 
 test("charger discovery removes advertising without discarding power or product type", () => {
   assert.equal(discoveryTerm("Genuine Original Premium 20W USB Charger Free Delivery"), "20w usb charger");
