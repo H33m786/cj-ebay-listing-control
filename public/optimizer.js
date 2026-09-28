@@ -90,7 +90,7 @@ function richerDescription(draft) {
   const lines = [];
   const base = String(draft.description || "").trim();
   if (base) lines.push(base);
-  else lines.push(`${draft.title || "New supplier item"}.`);
+  else lines.push(`${draft.title || "New item"}.`);
 
   const specifics = Object.entries(draft.itemSpecifics || {}).filter(([name, value]) => name !== "Condition" && String(value || "").trim());
   if (specifics.length) {
@@ -110,7 +110,7 @@ function richerDescription(draft) {
   lines.push(
     "",
     "Condition: New.",
-    "Dispatch: Supplier fulfilled. Delivery and handling times are based on the selected shipping quote."
+    "Please check the selected option, photos, item specifics and estimated delivery window before ordering."
   );
   return compactLines(lines).join("\n").slice(0, 4000);
 }
