@@ -971,11 +971,15 @@ const researchSeeds = {
   travel: ["travel organiser", "packing cubes", "crossbody bag"]
 };
 
+const researchMinimumProfitGbp = 1;
+const researchMedianAllowance = 1.05;
+
 async function researchOpportunities(url) {
   const keyword = url.searchParams.get("keyword")?.trim() || "";
   const category = url.searchParams.get("category") || "trending";
   const terms = keyword ? [keyword] : researchSeeds[category] || researchSeeds.trending;
   const token = await getEbayAppToken();
+  const fx = process.env.CJ_USE_LIVE === "true" ? await fetchUsdToGbpRate().catch(() => null) : null;
   const groups = [];
   const recommendations = [];
   for (const term of terms.slice(0, 5)) {
@@ -985,26 +989,45 @@ async function researchOpportunities(url) {
     const cjUrl = new URL("http://local/api/products");
     cjUrl.searchParams.set("keyword", term);
     const cjResult = await fetchCjProducts(cjUrl);
-    const cjProducts = (cjResult.products || []).slice(0, 8);
-    groups.push({ term, medianPrice, ebayItems: ebayItems.slice(0, 5), cjCount: cjProducts.length });
+    const cjProducts = (cjResult.products || []).slice(0, process.env.CJ_USE_LIVE === "true" ? 5 : 8);
+    let viableCount = 0;
+    let rejectedByPrice = 0;
     for (const product of cjProducts) {
-      const landed = Number((Number(product.cost || 0) + Number(product.shipping || 0)).toFixed(2));
       const market = medianPrice || ebayItems[0]?.price || 0;
-      const fees = market ? estimateFees(market) : 0;
-      const roughMargin = Number((market - landed - fees).toFixed(2));
+      const viability = await researchViabilityForProduct(product, market, fx);
+      if (viability.minimumSalePrice == null) {
+        rejectedByPrice += 1;
+        continue;
+      }
+      if (market && viability.minimumSalePrice != null && viability.minimumSalePrice > market * researchMedianAllowance) {
+        rejectedByPrice += 1;
+        continue;
+      }
+      viableCount += 1;
+      const fees = market ? estimateFees(market) : null;
+      const roughMargin = market && viability.landedEstimate != null ? Number((market - viability.landedEstimate - fees).toFixed(2)) : null;
       const match = titleMatchScore(term, product.title || product.productNameEn || "");
+      const medianGapPercent = market && viability.minimumSalePrice != null ? Number(((viability.minimumSalePrice - market) / market * 100).toFixed(1)) : null;
+      const priceHeadroom = market && viability.minimumSalePrice != null ? Number((market - viability.minimumSalePrice).toFixed(2)) : null;
       recommendations.push({
         term,
         product,
         ebayMedianPrice: medianPrice,
         ebayExampleCount: ebayItems.length,
-        landedEstimate: landed || null,
-        estimatedFees: market ? fees : null,
-        roughMargin: market ? roughMargin : null,
-        score: Number(((roughMargin || 0) + match * 8 + Math.min(Number(product.stock || 0), 50) / 20).toFixed(2)),
-        caution: !Number(product.shipping || 0) ? "CJ shipping quote needed before trusting margin." : ""
+        landedEstimate: viability.landedEstimate,
+        minimumSalePrice: viability.minimumSalePrice,
+        minimumProfitGbp: researchMinimumProfitGbp,
+        medianGapPercent,
+        priceHeadroom,
+        shippingService: viability.shippingService,
+        estimatedFees: fees,
+        roughMargin,
+        viableAtMedian: market && viability.minimumSalePrice != null ? viability.minimumSalePrice <= market * researchMedianAllowance : false,
+        score: Number(((priceHeadroom || -20) + match * 8 + Math.min(Number(product.stock || 0), 50) / 20).toFixed(2)),
+        caution: viability.caution
       });
     }
+    groups.push({ term, medianPrice, ebayItems: ebayItems.slice(0, 5), cjCount: cjProducts.length, viableCount, rejectedByPrice });
   }
   recommendations.sort((a, b) => b.score - a.score);
   return {
@@ -1012,8 +1035,97 @@ async function researchOpportunities(url) {
     keyword,
     marketplace: process.env.EBAY_MARKETPLACE_ID || "EBAY_GB",
     generatedAt: new Date().toISOString(),
+    minimumProfitGbp: researchMinimumProfitGbp,
+    medianAllowancePercent: Math.round((researchMedianAllowance - 1) * 100),
     groups,
     recommendations: recommendations.slice(0, 12)
+  };
+}
+
+async function researchViabilityForProduct(product, marketPrice, fx) {
+  const live = process.env.CJ_USE_LIVE === "true" && !isSampleProduct(product);
+  if (live) {
+    const quoted = await cheapestCjQuoteForResearch(product).catch((error) => ({ error: error.message }));
+    if (quoted && !quoted.error) {
+      return viabilityFromCosts({
+        product,
+        cost: quoted.cost,
+        shipping: quoted.shipping,
+        currency: "USD",
+        usdToGbp: fx?.rate,
+        marketPrice,
+        shippingService: quoted.shippingService,
+        caution: fx?.rate ? "" : "Live USD to GBP rate unavailable; enter conversion before drafting."
+      });
+    }
+    return {
+      landedEstimate: null,
+      minimumSalePrice: null,
+      shippingService: "",
+      caution: `CJ shipping quote unavailable: ${quoted?.error || "quote failed"}`
+    };
+  }
+  return viabilityFromCosts({ product, cost: product.cost, shipping: product.shipping, currency: "GBP", usdToGbp: 1, marketPrice, shippingService: "Sample shipping" });
+}
+
+async function cheapestCjQuoteForResearch(product) {
+  const pid = product.pid || product.productId || product.cjProductId;
+  if (!pid) throw new Error("CJ product ID missing.");
+  const token = await getUsableCjToken();
+  const detail = await cjProductDetail(pid, token);
+  const variants = (detail.data?.variants || detail.data?.variantList || [])
+    .filter((variant) => variant?.vid && Number.isFinite(Number(variant.variantSellPrice)))
+    .sort((a, b) => Number(a.variantSellPrice) - Number(b.variantSellPrice))
+    .slice(0, 3);
+  if (!variants.length) throw new Error("CJ returned no priced variants.");
+  let best = null;
+  for (const variant of variants) {
+    const quote = await cjQuoteVariant({ pid, vid: variant.vid }, token, variant);
+    const cheapest = (quote.quotes || []).slice().sort((a, b) => Number(a.price) - Number(b.price))[0];
+    if (!cheapest) continue;
+    const landed = Number(quote.cost) + Number(cheapest.price);
+    if (!best || landed < best.landed) {
+      best = { cost: Number(quote.cost), shipping: Number(cheapest.price), shippingService: cheapest.name, landed };
+    }
+    await wait(250);
+  }
+  if (!best) throw new Error("CJ returned no UK shipping options.");
+  return best;
+}
+
+function viabilityFromCosts({ product, cost, shipping, currency, usdToGbp, marketPrice, shippingService = "", caution = "" }) {
+  const rate = currency === "GBP" ? 1 : Number(usdToGbp);
+  const hasCosts = Number.isFinite(Number(cost)) && Number.isFinite(Number(shipping)) && Number.isFinite(rate) && rate > 0;
+  if (!hasCosts) {
+    return {
+      landedEstimate: null,
+      minimumSalePrice: null,
+      shippingService,
+      caution: caution || "Supplier item cost, shipping or currency conversion is missing."
+    };
+  }
+  const landedEstimate = Number(((Number(cost) + Number(shipping)) * rate).toFixed(2));
+  const minimumSalePrice = targetSalePrice({
+    source: product.source || "cj",
+    cjProductId: product.pid || product.cjProductId || "research",
+    cost,
+    shippingCost: shipping,
+    costCurrency: currency,
+    usdToGbp: rate,
+    pricingReviewed: true,
+    salePrice: marketPrice || landedEstimate,
+    feePercent: 12.8,
+    feeFixed: 0.3,
+    priceTargetType: "fixed",
+    targetProfitGbp: researchMinimumProfitGbp,
+    promotedListingEnabled: false,
+    otherCostsGbp: 0
+  }).price;
+  return {
+    landedEstimate,
+    minimumSalePrice,
+    shippingService,
+    caution
   };
 }
 

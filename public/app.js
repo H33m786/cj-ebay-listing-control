@@ -685,13 +685,18 @@ async function localApi(path, options, originalError) {
     const keyword = url.searchParams.get("keyword")?.toLowerCase() || "";
     const category = url.searchParams.get("category") || "trending";
     const terms = keyword ? [keyword] : [category, ...(categoryAliases[category] || [])].slice(0, 3);
+    const minimumProfitGbp = 1;
+    const medianAllowancePercent = 5;
     const groups = terms.map((term) => {
       const products = sampleProducts.filter((product) => matchesProduct(product, term) || matchesCategory(product, category)).slice(0, 3);
       const prices = products.map((product) => Number((product.cost + product.shipping) * 2.2 + 4));
+      const medianPrice = prices[0] || 24.99;
       return {
         term,
-        medianPrice: prices[0] || 24.99,
+        medianPrice,
         cjCount: products.length,
+        viableCount: products.length,
+        rejectedByPrice: 0,
         ebayItems: products.map((product) => ({ title: product.title, price: Number((product.cost + product.shipping) * 2.2 + 4), currency: "GBP", image: product.image, url: "" }))
       };
     });
@@ -701,12 +706,43 @@ async function localApi(path, options, originalError) {
       .map((product) => {
         const landed = Number((product.cost + product.shipping).toFixed(2));
         const market = group.medianPrice || 0;
+        const minimumSalePrice = targetSalePrice({
+          ...product,
+          source: "sample",
+          cost: product.cost,
+          shippingCost: product.shipping,
+          costCurrency: "GBP",
+          pricingReviewed: true,
+          salePrice: market,
+          feePercent: 12.8,
+          feeFixed: 0.3,
+          priceTargetType: "fixed",
+          targetProfitGbp: minimumProfitGbp,
+          promotedListingEnabled: false,
+          otherCostsGbp: 0
+        }).price;
         const fees = estimateFees(market);
-        return { term: group.term, product, ebayMedianPrice: market, ebayExampleCount: group.ebayItems.length, landedEstimate: landed, estimatedFees: fees, roughMargin: Number((market - landed - fees).toFixed(2)), score: Number((market - landed).toFixed(2)), caution: "Sample recommendation. Use live eBay/CJ connections for production research." };
+        return {
+          term: group.term,
+          product,
+          ebayMedianPrice: market,
+          ebayExampleCount: group.ebayItems.length,
+          landedEstimate: landed,
+          minimumSalePrice,
+          minimumProfitGbp,
+          medianGapPercent: minimumSalePrice ? Number(((minimumSalePrice - market) / market * 100).toFixed(1)) : null,
+          priceHeadroom: minimumSalePrice ? Number((market - minimumSalePrice).toFixed(2)) : null,
+          estimatedFees: fees,
+          roughMargin: Number((market - landed - fees).toFixed(2)),
+          viableAtMedian: minimumSalePrice ? minimumSalePrice <= market * 1.05 : false,
+          score: Number(((market - (minimumSalePrice || landed)) + 4).toFixed(2)),
+          caution: "Sample recommendation. Use live eBay/CJ connections for production research."
+        };
       }))
+      .filter((item) => item.viableAtMedian)
       .sort((a, b) => b.score - a.score)
       .slice(0, 12);
-    return { category, keyword, marketplace: "sample", generatedAt: new Date().toISOString(), groups, recommendations };
+    return { category, keyword, marketplace: "sample", generatedAt: new Date().toISOString(), minimumProfitGbp, medianAllowancePercent, groups, recommendations };
   }
 
   if (url.pathname === "/api/drafts" && (!options.method || options.method === "GET")) {
@@ -1086,11 +1122,13 @@ function renderResearch() {
   results.innerHTML = `
     <section class="research-panel">
       <h3>eBay market snapshot</h3>
+      <p class="meta">Recommendations are filtered to products where CJ landed cost plus fees can still reach about ${money(research.minimumProfitGbp ?? 1)} profit within ${escapeHtml(research.medianAllowancePercent ?? 5)}% of the eBay median.</p>
       <div class="research-terms">
         ${(research.groups || []).map((group) => `
           <article class="research-term">
             <strong>${escapeHtml(group.term)}</strong>
-            <span>${money(group.medianPrice)} median / ${group.ebayItems?.length || 0} eBay examples / ${group.cjCount || 0} CJ matches</span>
+            <span>${money(group.medianPrice)} median / ${group.ebayItems?.length || 0} eBay examples / ${group.viableCount ?? 0} viable of ${group.cjCount || 0} CJ matches</span>
+            ${group.rejectedByPrice ? `<p class="meta">${escapeHtml(group.rejectedByPrice)} skipped because the minimum viable price was above the median target.</p>` : ""}
             ${(group.ebayItems || []).slice(0, 3).map((item) => `<p class="meta">${escapeHtml(item.title)} / ${money(item.price, item.currency || "GBP")}${item.url ? ` / <a href="${escapeAttr(item.url)}" target="_blank" rel="noreferrer">View</a>` : ""}</p>`).join("")}
           </article>
         `).join("")}
@@ -1139,9 +1177,12 @@ function researchRecommendationMarkup(item, index) {
         <div class="detail-metrics">
           <div class="metric"><span>eBay median</span><strong>${money(item.ebayMedianPrice)}</strong></div>
           <div class="metric"><span>CJ landed</span><strong>${money(item.landedEstimate)}</strong></div>
+          <div class="metric"><span>Minimum viable</span><strong>${money(item.minimumSalePrice)}</strong></div>
+          <div class="metric"><span>Median gap</span><strong>${item.medianGapPercent == null ? "Unknown" : `${item.medianGapPercent > 0 ? "+" : ""}${escapeHtml(item.medianGapPercent)}%`}</strong></div>
           <div class="metric"><span>Rough margin</span><strong>${money(item.roughMargin)}</strong></div>
           <div class="metric"><span>Score</span><strong>${escapeHtml(item.score ?? "0")}</strong></div>
         </div>
+        <p class="meta">${item.shippingService ? `Cheapest CJ shipping: ${escapeHtml(item.shippingService)}. ` : ""}The minimum viable price includes CJ landed cost, estimated eBay fees, and ${money(item.minimumProfitGbp ?? 1)} profit.</p>
         ${item.caution ? `<p class="inline-status">${escapeHtml(item.caution)}</p>` : ""}
         <button type="button" data-research-index="${index}">Create draft</button>
       </div>
