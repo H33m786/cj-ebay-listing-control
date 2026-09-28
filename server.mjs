@@ -1002,10 +1002,12 @@ async function researchOpportunities(url) {
     const store = await readStore();
     return ebayFirstResearch({ terms, settings,
       existing: [...(store.drafts || []), ...(store.published || []).filter((item) => item.status !== "withdrawn")],
-      searchEbay: (term) => searchEbayMarket(term, token),
+      searchEbay: (term) => searchEbayMarket(term, token, { offset: (settings.batch - 1) * 12 }),
       searchCj: async (term) => {
         const query = new URL("http://local/api/products");
         query.searchParams.set("keyword", term);
+        query.searchParams.set("page", String(settings.batch));
+        query.searchParams.set("size", "20");
         return (await fetchCjProducts(query)).products || [];
       },
       quote: (product, price, options) => researchViabilityForProduct(product, price, fx, options),
@@ -1168,6 +1170,7 @@ async function searchEbayMarket(term, token, options = {}) {
     limit: "12",
     filter: "buyingOptions:{FIXED_PRICE},conditions:{NEW}"
   });
+  if (Number.isInteger(options.offset) && options.offset > 0) query.set("offset", String(options.offset));
   if (/^\d+$/.test(options.categoryId || "")) query.set("category_ids", options.categoryId);
   const result = await ebayApi(`/buy/browse/v1/item_summary/search?${query}`, token);
   return (result.itemSummaries || []).map((item) => ({

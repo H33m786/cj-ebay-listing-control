@@ -1102,7 +1102,7 @@ function titleWords(value) {
   return String(value || "").toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2 && !stop.has(word)).slice(0, 12);
 }
 
-async function loadResearch(idea = null) {
+async function loadResearch(idea = null, batch = 1) {
   if (state.researchLoading) return;
   state.researchLoading = true;
   const submit = $("#researchForm button[type=submit]");
@@ -1112,9 +1112,10 @@ async function loadResearch(idea = null) {
   const category = encodeURIComponent($("#researchCategoryInput").value);
   const mode = idea ? "keywords" : $("#researchModeInput").value;
   const profit = encodeURIComponent($("#researchProfitInput").value);
+  state.researchQuery = { keyword, category, mode, profit };
   results.innerHTML = '<div class="empty-state">Checking eBay market prices and matching CJ products...</div>';
   try {
-    state.research = await api(`/api/research/opportunities?keyword=${keyword}&category=${category}&mode=${mode}&profit=${profit}${idea ? `&ideaId=${encodeURIComponent(idea.id)}` : ""}`);
+    state.research = await api(`/api/research/opportunities?keyword=${keyword}&category=${category}&mode=${mode}&profit=${profit}&batch=${batch}${idea ? `&ideaId=${encodeURIComponent(idea.id)}` : ""}`);
     renderResearch();
   } catch (error) {
     results.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
@@ -1132,7 +1133,7 @@ function renderResearch() {
     return;
   }
   results.innerHTML = `
-    ${research.mode === "ebay-first" ? `<p class="meta">eBay-first opportunities / Sales demand unverified / ${research.quoted} shipping checks / ${research.alreadyAdded} already in drafts or listings</p>` : ""}
+    ${research.mode === "ebay-first" ? `<p class="meta">eBay-first opportunities / Batch ${research.batch || 1} / Sales demand unverified / ${research.quoted} shipping checks / ${research.alreadyAdded} already in drafts or listings</p>${(research.batch || 1) < 100 ? '<button type="button" data-next-research>Next batch</button>' : ""}` : ""}
     ${research.warnings?.length ? `<section class="validation-box fail">${research.warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>` : ""}
     ${research.evidence ? `<section class="research-panel"><h3>Research reference: ${escapeHtml(research.evidence.title)}</h3><p class="meta">${research.evidence.sales == null ? "No sales figures supplied." : `${escapeHtml(research.evidence.sales)} units over ${escapeHtml(research.evidence.days)} days, supplied by you; not independently verified.`} Similar CJ products may perform differently.</p></section>` : ""}
     <section class="research-panel">
@@ -1143,7 +1144,7 @@ function renderResearch() {
           <article class="research-term">
             <strong>${escapeHtml(group.term)}</strong>
             ${group.note ? `<p class="meta">${escapeHtml(group.note)}</p>` : ""}
-            <span>${money(group.medianPrice)} ${research.evidence ? "researched sold price" : "active delivered median"} / ${group.viableCount ?? 0} viable of ${group.cjCount || 0} CJ candidates checked</span>
+            <span>${money(group.medianPrice)} ${research.evidence ? "researched sold price" : "active delivered median"} / ${group.viableCount ?? 0} viable of ${group.cjCount || 0} CJ candidates retrieved</span>
             ${group.rejectedByPrice ? `<p class="meta">${escapeHtml(group.rejectedByPrice)} excluded by price, delivery, missing data or weak title match.</p>` : ""}
             ${(group.ebayItems || []).slice(0, 3).map((item) => `<p class="meta">${escapeHtml(item.title)} / ${money(item.price, item.currency || "GBP")}${item.url ? ` / <a href="${escapeAttr(item.url)}" target="_blank" rel="noreferrer">View</a>` : ""}</p>`).join("")}
           </article>
@@ -1153,10 +1154,16 @@ function renderResearch() {
     <section class="research-panel">
       <h3>Recommended CJ products to check</h3>
       <div class="research-recommendations">
-        ${(research.recommendations || []).map((item, index) => researchRecommendationMarkup(item, index)).join("") || '<div class="empty-state">No products passed the comparison, cost and delivery checks. Try another niche.</div>'}
+        ${(research.recommendations || []).map((item, index) => researchRecommendationMarkup(item, index)).join("") || '<div class="empty-state">No verified cost matches in this scan. See the comparison notes and excluded candidates below.</div>'}
       </div>
     </section>
+    ${research.excluded?.length ? `<section class="research-panel"><h3>Excluded candidates</h3><div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>CJ product</th><th>Reason</th><th>Required price</th><th>eBay median</th></tr></thead><tbody>${research.excluded.map((item) => `<tr><td>${escapeHtml(item.title)}</td><td>${escapeHtml(item.reason)}</td><td>${money(item.minimumSalePrice)}</td><td>${money(item.medianPrice)}</td></tr>`).join("")}</tbody></table></div></section>` : ""}
   `;
+  results.querySelector("[data-next-research]")?.addEventListener("click", () => {
+    const previous = state.researchQuery;
+    const unchanged = previous && previous.keyword === encodeURIComponent($("#researchKeywordInput").value.trim()) && previous.category === encodeURIComponent($("#researchCategoryInput").value) && previous.mode === $("#researchModeInput").value && previous.profit === encodeURIComponent($("#researchProfitInput").value);
+    loadResearch(null, unchanged ? (research.batch || 1) + 1 : 1);
+  });
   results.querySelectorAll("[data-research-index]").forEach((button) => {
     button.addEventListener("click", async () => {
       const recommendation = state.research.recommendations[Number(button.dataset.researchIndex)];

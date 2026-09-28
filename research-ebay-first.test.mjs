@@ -1,6 +1,47 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { discoverySettings, ebayFirstResearch } from "./research-ebay-first.mjs";
+import { discoveryTerm, discoverySettings, ebayFirstResearch } from "./research-ebay-first.mjs";
+
+test("charger discovery removes advertising without discarding power or product type", () => {
+  assert.equal(discoveryTerm("Genuine Original Premium 20W USB Charger Free Delivery"), "20w usb charger");
+  assert.match(discoveryTerm("Wireless 15W car charger"), /wireless 15w car charger/);
+});
+test("broad charger results trigger focused eBay comparisons before CJ search", async () => {
+  const calls = [];
+  const result = await ebayFirstResearch(options({ terms: ["charger"], searchEbay: async (term) => {
+    calls.push(term);
+    return term === "charger" ? peers.slice(0, 1) : peers;
+  } }));
+  assert.deepEqual(calls, ["charger", "usb desk lamp"]);
+  assert.equal(result.recommendations.length, 1);
+});
+test("unprofitable CJ candidates include price comparison and rejection reason", async () => {
+  const result = await ebayFirstResearch(options({ quote: async () => ({ minimumSalePrice: 30 }) }));
+  assert.equal(result.excluded[0].minimumSalePrice, 30);
+  assert.equal(result.excluded[0].medianPrice, 22);
+  assert.match(result.excluded[0].reason, /Too expensive/);
+});
+
+test("discovery examines CJ candidates beyond the first five", async () => {
+  const result = await ebayFirstResearch(options({
+    searchCj: async () => Array.from({ length: 20 }, (_, i) => ({ pid: `CJ${i}`, title: i === 9 ? "USB desk lamp" : "unrelated" })),
+    match: (term, title) => title === "unrelated" ? 0 : 1
+  }));
+  assert.equal(result.recommendations[0].product.pid, "CJ9");
+  assert.equal(result.groups[0].cjCount, 20);
+});
+
+test("shipping checks are bounded at twelve per scan", async () => {
+  const result = await ebayFirstResearch(options({ searchCj: async () => Array.from({ length: 20 }, (_, i) => ({ pid: `CJ${i}`, title: "USB desk lamp" })) }));
+  assert.equal(result.quoted, 12);
+  assert.equal(result.recommendations.length, 12);
+  assert.match(result.groups[0].note, /12 shipping checks/);
+});
+
+test("batch values are validated and retained", () => {
+  assert.equal(discoverySettings(new URLSearchParams({ batch: "3" })).batch, 3);
+  for (const batch of ["-1", "0", "1.5", "101", "bad"]) assert.throws(() => discoverySettings(new URLSearchParams({ batch })));
+});
 
 const peers = Array.from({ length: 3 }, (_, i) => ({ title: "USB desk lamp", itemId: String(i), price: 20, currency: "GBP", shippingCost: 2, shippingCurrency: "GBP" }));
 function options(overrides = {}) {
