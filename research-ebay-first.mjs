@@ -28,7 +28,7 @@ export function discoveryMatch(source, candidate, fallback) {
     return { score: 0.7, reason: "Potential charger match; verify connector, plug, power, certification and pack quantity." };
   }
   const score = fallback(discoveryTerm(left), discoveryTerm(right));
-  return { score, reason: "Needs review: product wording does not establish a comparable item." };
+  return { score, reason: score >= 0.6 ? "Potential product match; verify the item type, specs, pack quantity and photos." : "Not a close enough match to compare with this eBay item." };
 }
 
 export function chargerSearchMatches(query, title) {

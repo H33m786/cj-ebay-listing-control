@@ -1,6 +1,7 @@
 import { fetchOrders } from "./orders.mjs";
 
 const metrics = ["LISTING_VIEWS_TOTAL", "TOTAL_IMPRESSION_TOTAL", "TRANSACTION"];
+const trafficChunkSize = 15;
 
 function dayKey(date) {
   return date.toISOString().slice(0, 10);
@@ -10,9 +11,28 @@ function compactDate(key) {
   return key.replaceAll("-", "");
 }
 
+function listingDimensionKeys(value = "") {
+  const raw = String(value || "").trim();
+  const keys = new Set();
+  if (raw) keys.add(raw);
+  for (const match of raw.matchAll(/\d{6,}/g)) keys.add(match[0]);
+  return keys;
+}
+
+function mergeMetricValues(target, patch = {}) {
+  for (const [key, value] of Object.entries(patch)) target[key] = (target[key] || 0) + (Number(value) || 0);
+  return target;
+}
+
+function mergeIntoMetricMap(map, key, values) {
+  const target = map.get(key) || {};
+  map.set(key, mergeMetricValues(target, values));
+}
+
 function metricMap(report = {}) {
   const keys = (report.header?.metrics || []).map((item) => item.key);
-  return new Map((report.records || []).map((record) => {
+  const output = new Map();
+  for (const record of report.records || []) {
     const dimension = record.dimensionValues?.[0]?.value || "";
     const values = {};
     keys.forEach((key, index) => {
@@ -20,8 +40,9 @@ function metricMap(report = {}) {
       const number = Number(raw);
       values[key] = Number.isFinite(number) ? number : 0;
     });
-    return [String(dimension), values];
-  }));
+    for (const key of listingDimensionKeys(dimension)) mergeIntoMetricMap(output, key, values);
+  }
+  return output;
 }
 
 function listingRows(published = [], environment = "production") {
@@ -92,16 +113,28 @@ async function allOrders(days, request, published, environment, now) {
 
 async function trafficForDay(day, listings, request, marketplaceId) {
   if (!listings.length) return new Map();
-  const listingIds = listings.map((item) => item.listingId).join("|");
-  const params = new URLSearchParams({
-    dimension: "LISTING",
-    filter: `listing_ids:{${listingIds}},marketplace_ids:{${marketplaceId}},date_range:[${compactDate(day.date)}..${compactDate(day.date)}]`,
-    metric: metrics.join(","),
-    sort: "LISTING_VIEWS_TOTAL"
-  });
-  const report = await request(`/sell/analytics/v1/traffic_report?${params}`);
-  day.trafficUpdatedAt = report.lastUpdatedDate || null;
-  return metricMap(report);
+  const output = new Map();
+  const failures = [];
+  for (let index = 0; index < listings.length; index += trafficChunkSize) {
+    const chunk = listings.slice(index, index + trafficChunkSize);
+    const listingIds = chunk.map((item) => item.listingId).join("|");
+    const params = new URLSearchParams({
+      dimension: "LISTING",
+      filter: `listing_ids:{${listingIds}},marketplace_ids:{${marketplaceId}},date_range:[${compactDate(day.date)}..${compactDate(day.date)}]`,
+      metric: metrics.join(","),
+      sort: "LISTING_VIEWS_TOTAL"
+    });
+    try {
+      const report = await request(`/sell/analytics/v1/traffic_report?${params}`);
+      day.trafficUpdatedAt = report.lastUpdatedDate || day.trafficUpdatedAt || null;
+      for (const [listingId, values] of metricMap(report)) mergeIntoMetricMap(output, listingId, values);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length && !output.size) throw failures[0];
+  if (failures.length) day.trafficPartial = true;
+  return output;
 }
 
 export async function buildStats(params, request, published = [], environment = "production", marketplaceId = "EBAY_GB", now = new Date()) {
@@ -154,6 +187,7 @@ export async function buildStats(params, request, published = [], environment = 
     for (const day of trafficDays) {
       try {
         const traffic = await trafficForDay(day, listings, request, marketplaceId);
+        if (day.trafficPartial) warnings.push(`Views partially unavailable for ${day.date}: eBay returned data for some listings only.`);
         for (const listing of listings) {
           const values = traffic.get(listing.listingId);
           if (!values) continue;
@@ -181,7 +215,7 @@ export async function buildStats(params, request, published = [], environment = 
     environment,
     marketplaceId,
     trafficDays: dailyTrafficDays,
-    trafficComplete: days.every((day) => day.views != null),
+    trafficComplete: days.every((day) => day.views != null && !day.trafficPartial),
     range: since ? "all" : String(daysRequested),
     sinceFirstPublished: since,
     firstPublishedAt: firstDate ? firstDate.toISOString() : null,

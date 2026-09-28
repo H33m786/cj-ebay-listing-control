@@ -109,3 +109,63 @@ test("buildStats caps since-first-published range at 365 days", async () => {
   assert.equal(result.days.length, 365);
   assert.match(result.warnings.join(" "), /capped/);
 });
+
+test("stats traffic requests are chunked and merged for larger listing sets", async () => {
+  const calls = [];
+  const result = await buildStats(new URLSearchParams({ days: "1" }), async (path) => {
+    calls.push(path);
+    if (path.startsWith("/sell/fulfillment/")) return { orders: [] };
+    const ids = listingIds(path);
+    return trafficReport(ids.map((id, index) => ({ id, views: index + 1, impressions: (index + 1) * 10 })));
+  }, publishedListings(20), "production", "EBAY_GB", new Date("2026-09-28T12:00:00.000Z"));
+
+  assert.equal(calls.filter((path) => path.startsWith("/sell/analytics/")).length, 2);
+  assert.equal(result.totals.views, 135);
+  assert.equal(result.totals.impressions, 1350);
+  assert.equal(result.trafficComplete, true);
+});
+
+test("stats keep available views when one traffic chunk fails", async () => {
+  let trafficCalls = 0;
+  const result = await buildStats(new URLSearchParams({ days: "1" }), async (path) => {
+    if (path.startsWith("/sell/fulfillment/")) return { orders: [] };
+    trafficCalls += 1;
+    if (trafficCalls === 2) throw new Error("temporary eBay analytics error");
+    return trafficReport(listingIds(path).map((id) => ({ id, views: 2, impressions: 3 })));
+  }, publishedListings(20), "production", "EBAY_GB", new Date("2026-09-28T12:00:00.000Z"));
+
+  assert.equal(result.totals.views, 30);
+  assert.equal(result.totals.impressions, 45);
+  assert.equal(result.trafficComplete, false);
+  assert.match(result.warnings.join("\n"), /partially unavailable/);
+});
+
+function publishedListings(count) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `local-${index}`,
+    title: `Listing ${index + 1}`,
+    sku: `SKU${index + 1}`,
+    ebayListingId: String(100000 + index),
+    publishedMode: "production",
+    status: "published",
+    publishedAt: "2026-09-28T08:00:00.000Z"
+  }));
+}
+
+function listingIds(path) {
+  const url = new URL(`http://local${path}`);
+  const filter = url.searchParams.get("filter") || "";
+  const match = filter.match(/listing_ids:\{([^}]+)\}/);
+  return match ? match[1].split("|") : [];
+}
+
+function trafficReport(rows) {
+  return {
+    header: { metrics: [{ key: "LISTING_VIEWS_TOTAL" }, { key: "TOTAL_IMPRESSION_TOTAL" }, { key: "TRANSACTION" }] },
+    records: rows.map((row) => ({
+      dimensionValues: [{ value: `listing:${row.id}` }],
+      metricValues: [{ value: String(row.views) }, { value: String(row.impressions) }, { value: "0" }]
+    })),
+    lastUpdatedDate: "2026-09-28T10:00:00.000Z"
+  };
+}

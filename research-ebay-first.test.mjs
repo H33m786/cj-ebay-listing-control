@@ -35,6 +35,12 @@ test("charger matching rejects incompatible types, cables and stated wattages", 
   }
 });
 
+test("weak non-charger matches use clear comparison wording", () => {
+  const match = discoveryMatch("winter jacket", "desk organiser", () => 0);
+  assert.equal(match.reason, "Not a close enough match to compare with this eBay item.");
+  assert.doesNotMatch(match.reason, /product wording does not establish/i);
+});
+
 test("real title matching lets equivalent CJ chargers reach shipping checks", async () => {
   const result = await ebayFirstResearch(options({
     searchEbay: async () => peers.map((item) => ({ ...item, title: "20W USB-C Fast Charger For iPhone Samsung" })),
