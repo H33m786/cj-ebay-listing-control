@@ -2697,16 +2697,19 @@ function statsLineGraph(days) {
   const pad = { top: 18, right: 20, bottom: 38, left: 42 };
   const plotWidth = width - pad.left - pad.right;
   const plotHeight = height - pad.top - pad.bottom;
-  const maxViews = Math.max(1, ...days.map((day) => Number(day.views || 0)));
-  const maxUnits = Math.max(1, ...days.map((day) => Number(day.units || 0)));
+  const peakViews = Math.max(0, ...days.map((day) => Number(day.views || 0)));
+  const peakUnits = Math.max(0, ...days.map((day) => Number(day.units || 0)));
+  const maxViews = Math.max(1, peakViews);
+  const maxUnits = Math.max(1, peakUnits);
   const point = (day, index, key, max) => {
     const x = pad.left + (days.length === 1 ? plotWidth / 2 : index / (days.length - 1) * plotWidth);
     const y = pad.top + plotHeight - (Number(day[key] || 0) / max * plotHeight);
     return { x: Number(x.toFixed(2)), y: Number(y.toFixed(2)) };
   };
   const pathFor = (key, max) => days.map((day, index) => {
+    if (day[key] == null) return "";
     const { x, y } = point(day, index, key, max);
-    return `${index ? "L" : "M"}${x},${y}`;
+    return `${index && days[index - 1][key] != null ? "L" : "M"}${x},${y}`;
   }).join(" ");
   const labelIndexes = [...new Set([0, Math.floor((days.length - 1) / 2), days.length - 1])].filter((index) => index >= 0);
   return `
@@ -2720,14 +2723,14 @@ function statsLineGraph(days) {
         ${days.map((day, index) => {
           const view = point(day, index, "views", maxViews);
           const unit = point(day, index, "units", maxUnits);
-          return `<circle class="dot views" cx="${view.x}" cy="${view.y}" r="4"><title>${escapeHtml(day.label)}: ${day.views || 0} views</title></circle><circle class="dot units" cx="${unit.x}" cy="${unit.y}" r="4"><title>${escapeHtml(day.label)}: ${day.units || 0} sold</title></circle>`;
+          return `${day.views == null ? "" : `<circle class="dot views" cx="${view.x}" cy="${view.y}" r="4"><title>${escapeHtml(day.label)}: ${day.views} views</title></circle>`}<circle class="dot units" cx="${unit.x}" cy="${unit.y}" r="4"><title>${escapeHtml(day.label)}: ${day.units || 0} sold</title></circle>`;
         }).join("")}
         ${labelIndexes.map((index) => {
           const x = point(days[index], index, "views", maxViews).x;
           return `<text class="x-label" x="${x}" y="${height - 10}" text-anchor="${index === 0 ? "start" : index === days.length - 1 ? "end" : "middle"}">${escapeHtml(days[index].label)}</text>`;
         }).join("")}
-        <text class="y-label" x="8" y="${pad.top + 4}">${escapeHtml(String(maxViews))} views</text>
-        <text class="y-label units-label" x="${width - pad.right}" y="${pad.top + 4}" text-anchor="end">${escapeHtml(String(maxUnits))} sold</text>
+        <text class="y-label" x="8" y="${pad.top + 4}">${days.every((day) => day.views == null) ? "Views unavailable" : `${peakViews} views peak`}</text>
+        <text class="y-label units-label" x="${width - pad.right}" y="${pad.top + 4}" text-anchor="end">${peakUnits ? `${peakUnits} sold peak` : "0 sold"}</text>
       </svg>
       <div class="stats-legend"><span class="views">Views</span><span class="units">Units sold</span></div>
     </div>
@@ -2755,14 +2758,14 @@ function renderStats() {
     </form>
     ${stats?.warnings?.length ? `<section class="validation-box fail"><strong>Stats notes</strong><ul>${stats.warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>` : ""}
     <section class="stats-summary">
-      <div class="metric"><span>Views</span><strong>${escapeHtml(String(totals.views || 0))}</strong></div>
-      <div class="metric"><span>Impressions</span><strong>${escapeHtml(String(totals.impressions || 0))}</strong></div>
+      <div class="metric"><span>Views${stats?.trafficComplete === false ? " (partial)" : ""}</span><strong>${days.length && days.every((day) => day.views == null) ? "Unavailable" : escapeHtml(String(totals.views || 0))}</strong></div>
+      <div class="metric"><span>Impressions${stats?.trafficComplete === false ? " (partial)" : ""}</span><strong>${days.length && days.every((day) => day.impressions == null) ? "Unavailable" : escapeHtml(String(totals.impressions || 0))}</strong></div>
       <div class="metric"><span>Units sold</span><strong>${escapeHtml(String(totals.units || 0))}</strong></div>
       <div class="metric"><span>Revenue</span><strong>${money(totals.revenue)}</strong></div>
     </section>
     <section class="published-detail-panel stats-panel">
       <div class="published-detail-header">
-        <div><h3>Daily performance</h3><p class="meta">${stats ? `${stats.sinceFirstPublished ? "Since first published" : `Last ${stats.days.length} days`} / Updated ${new Date(stats.fetchedAt).toLocaleString("en-GB")}` : "Loading stats..."}</p></div>
+        <div><h3>Daily performance</h3><p class="meta">${stats ? `${stats.sinceFirstPublished ? "Since first published" : `Last ${stats.days.length} days`} / Retrieved ${new Date(stats.fetchedAt).toLocaleString("en-GB")}` : "Loading stats..."}</p></div>
       </div>
       ${statsLineGraph(days)}
     </section>
@@ -2770,7 +2773,7 @@ function renderStats() {
       ${days.map((day) => {
         const activeItems = (day.items || []).filter((item) => item.views || item.impressions || item.units || item.revenue);
         return `<details class="stats-day" ${activeItems.length ? "" : ""}>
-          <summary><strong>${escapeHtml(day.label)}</strong><span>${day.views || 0} views / ${day.units || 0} sold / ${money(day.revenue)}</span></summary>
+          <summary><strong>${escapeHtml(day.label)}</strong><span>${day.views == null ? "Views unavailable" : `${day.views} views`} / ${day.units || 0} sold / ${money(day.revenue)}</span></summary>
           ${activeItems.length ? `<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Item</th><th>Views</th><th>Impressions</th><th>Sold</th><th>Revenue</th></tr></thead><tbody>${activeItems.sort((a, b) => (b.views + b.units * 100) - (a.views + a.units * 100)).map((item) => `<tr><td>${escapeHtml(item.title)}<br><span class="meta">eBay ${escapeHtml(item.listingId)}</span></td><td>${escapeHtml(String(item.views || 0))}</td><td>${escapeHtml(String(item.impressions || 0))}</td><td>${escapeHtml(String(item.units || 0))}</td><td>${money(item.revenue)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="meta">No item views or sales recorded for this day.</p>'}
         </details>`;
       }).join("")}

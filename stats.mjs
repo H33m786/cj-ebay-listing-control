@@ -99,7 +99,9 @@ async function trafficForDay(day, listings, request, marketplaceId) {
     metric: metrics.join(","),
     sort: "LISTING_VIEWS_TOTAL"
   });
-  return metricMap(await request(`/sell/analytics/v1/traffic_report?${params}`));
+  const report = await request(`/sell/analytics/v1/traffic_report?${params}`);
+  day.trafficUpdatedAt = report.lastUpdatedDate || null;
+  return metricMap(report);
 }
 
 export async function buildStats(params, request, published = [], environment = "production", marketplaceId = "EBAY_GB", now = new Date()) {
@@ -144,9 +146,13 @@ export async function buildStats(params, request, published = [], environment = 
   if (!listings.length) {
     warnings.push("No active published listings found for this eBay environment.");
   } else {
-    try {
-      const trafficDays = days.slice(-dailyTrafficDays);
-      for (const day of trafficDays) {
+    const trafficDays = days.slice(-dailyTrafficDays);
+    for (const day of days.slice(0, -dailyTrafficDays)) {
+      day.views = null;
+      day.impressions = null;
+    }
+    for (const day of trafficDays) {
+      try {
         const traffic = await trafficForDay(day, listings, request, marketplaceId);
         for (const listing of listings) {
           const values = traffic.get(listing.listingId);
@@ -159,11 +165,13 @@ export async function buildStats(params, request, published = [], environment = 
           totals.impressions += impressions;
           addItem(day, listing, { views, impressions });
         }
+      } catch (error) {
+        day.views = null;
+        day.impressions = null;
+        warnings.push(`Views unavailable for ${day.date}: ${error.message}`);
       }
-      if (dailyTrafficDays < daysRequested) warnings.push("Listing view breakdown is limited to the latest 30 days to stay within eBay Analytics limits.");
-    } catch (error) {
-      warnings.push(`Views unavailable: ${error.message}. Reconnect eBay if Analytics access was not approved.`);
     }
+    if (dailyTrafficDays < daysRequested) warnings.push("Listing view breakdown is limited to the latest 30 days to stay within eBay Analytics limits.");
   }
 
   return {
@@ -173,6 +181,7 @@ export async function buildStats(params, request, published = [], environment = 
     environment,
     marketplaceId,
     trafficDays: dailyTrafficDays,
+    trafficComplete: days.every((day) => day.views != null),
     range: since ? "all" : String(daysRequested),
     sinceFirstPublished: since,
     firstPublishedAt: firstDate ? firstDate.toISOString() : null,

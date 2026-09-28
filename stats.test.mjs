@@ -28,6 +28,20 @@ function traffic(records) {
   };
 }
 
+test("a failed earlier day does not block today's views or invent sales", async () => {
+  const result = await buildStats(new URLSearchParams({ days: "7" }), async (path) => {
+    if (path.startsWith("/sell/fulfillment")) return { orders: [], total: 0 };
+    if (!path.includes("20260927")) throw new Error("Report unavailable");
+    return { ...traffic([["1001", 6, 10, 1]]), lastUpdatedDate: "2026-09-27T10:00:00Z" };
+  }, published, "production", "EBAY_GB", new Date("2026-09-27T12:00:00Z"));
+  assert.equal(result.totals.views, 6);
+  assert.equal(result.totals.units, 0);
+  assert.equal(result.days[0].views, null);
+  assert.equal(result.days.at(-1).views, 6);
+  assert.equal(result.days.at(-1).trafficUpdatedAt, "2026-09-27T10:00:00Z");
+  assert.equal(result.trafficComplete, false);
+});
+
 test("buildStats combines order sales and listing traffic by day", async () => {
   const result = await buildStats(new URLSearchParams({ days: "7" }), async (path) => {
     if (path.startsWith("/sell/fulfillment")) return { orders: [order], total: 1 };
