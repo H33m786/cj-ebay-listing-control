@@ -1,4 +1,6 @@
 import http from "node:http";
+import { eligibleResearchQuote, researchCostEstimate } from "./research-policy.mjs";
+import { previewResearchCsv, normalizeResearchIdea, mergeResearchIdeas, researchMedian } from "./research-import.mjs";
 import { publishingSetup } from "./ebay-setup.mjs";
 import { linkedEbayProfile, identityScope, refreshScopes } from "./ebay-profile.mjs";
 import { fetchOrders } from "./orders.mjs";
@@ -29,6 +31,22 @@ await loadEnvFile(path.join(__dirname, ".env"));
 const publicDir = path.join(__dirname, "public");
 const dataDir = path.join(__dirname, "data");
 const storePath = path.join(dataDir, "store.json");
+const researchPath = path.join(dataDir, "research-ideas.json");
+let researchWriteQueue = Promise.resolve();
+async function readResearchIdeas() {
+  try { return JSON.parse(await readFile(researchPath, "utf8")); }
+  catch (error) { if (error.code === "ENOENT") return []; throw error; }
+}
+function updateResearchIdeas(change) {
+  const operation = researchWriteQueue.then(async () => {
+    const result = change(await readResearchIdeas());
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(researchPath, JSON.stringify(result.ideas));
+    return result;
+  });
+  researchWriteQueue = operation.catch(() => {});
+  return operation;
+}
 const tokenPath = path.join(dataDir, "ebay-token.json");
 const cjTokenPath = path.join(dataDir, "cj-token.json");
 const statePath = path.join(dataDir, "ebay-oauth-state.json");
@@ -890,7 +908,7 @@ async function ebayCategoryFailures(draft, token) {
 }
 
 async function alignDraftForEbayCategory(draft, token) {
-  if (!draft.multiVariation || !draft.ebayCategoryId) return draft;
+  if (!draft.ebayCategoryId) return draft;
   try {
     return alignVariationAxesToSchema(draft, await ebayCategorySchema(draft.ebayCategoryId, token));
   } catch {
@@ -976,16 +994,20 @@ const researchMedianAllowance = 1.05;
 
 async function researchOpportunities(url) {
   const keyword = url.searchParams.get("keyword")?.trim() || "";
+  const ideaId = url.searchParams.get("ideaId");
+  const evidence = ideaId ? (await readResearchIdeas()).find((idea) => idea.id === ideaId) : null;
+  if (ideaId && !evidence) throw new Error("This research product is no longer in the shortlist.");
   const category = url.searchParams.get("category") || "trending";
   const terms = keyword ? [keyword] : researchSeeds[category] || researchSeeds.trending;
-  const token = await getEbayAppToken();
+  if (evidence && (!(evidence.price > 0) || !(evidence.sales > 0))) throw new Error("Save a positive sold price and recent sales count before matching a researched product.");
+  if (evidence && process.env.CJ_USE_LIVE !== "true") throw new Error("Enable the live CJ connection before matching researched products. Sample products are not sales opportunities.");
+  const token = evidence ? null : await getEbayAppToken();
   const fx = process.env.CJ_USE_LIVE === "true" ? await fetchUsdToGbpRate().catch(() => null) : null;
   const groups = [];
   const recommendations = [];
   for (const term of terms.slice(0, 5)) {
-    const ebayItems = await searchEbayMarket(term, token);
-    const ebayPrices = ebayItems.map((item) => item.price).filter((price) => price > 0).sort((a, b) => a - b);
-    const medianPrice = ebayPrices.length ? ebayPrices[Math.floor(ebayPrices.length / 2)] : null;
+    const ebayItems = evidence ? [] : await searchEbayMarket(term, token);
+    const medianPrice = evidence?.price || researchMedian(ebayItems);
     const cjUrl = new URL("http://local/api/products");
     cjUrl.searchParams.set("keyword", term);
     const cjResult = await fetchCjProducts(cjUrl);
@@ -993,19 +1015,21 @@ async function researchOpportunities(url) {
     let viableCount = 0;
     let rejectedByPrice = 0;
     for (const product of cjProducts) {
-      const market = medianPrice || ebayItems[0]?.price || 0;
-      const viability = await researchViabilityForProduct(product, market, fx);
+      if (evidence && titleMatchScore(term, product.title || product.productNameEn || "") < 0.4) { rejectedByPrice += 1; continue; }
+      const market = medianPrice || 0;
+      if (!market) { rejectedByPrice += 1; continue; }
+      const viability = await researchViabilityForProduct(product, market, fx, evidence || {});
       if (viability.minimumSalePrice == null) {
         rejectedByPrice += 1;
         continue;
       }
-      if (market && viability.minimumSalePrice != null && viability.minimumSalePrice > market * researchMedianAllowance) {
+      if (market && viability.minimumSalePrice != null && viability.minimumSalePrice > market * (evidence ? 1 : researchMedianAllowance)) {
         rejectedByPrice += 1;
         continue;
       }
       viableCount += 1;
-      const fees = market ? estimateFees(market) : null;
-      const roughMargin = market && viability.landedEstimate != null ? Number((market - viability.landedEstimate - fees).toFixed(2)) : null;
+      const fees = viability.estimatedFees;
+      const roughMargin = viability.roughMargin;
       const match = titleMatchScore(term, product.title || product.productNameEn || "");
       const medianGapPercent = market && viability.minimumSalePrice != null ? Number(((viability.minimumSalePrice - market) / market * 100).toFixed(1)) : null;
       const priceHeadroom = market && viability.minimumSalePrice != null ? Number((market - viability.minimumSalePrice).toFixed(2)) : null;
@@ -1016,14 +1040,18 @@ async function researchOpportunities(url) {
         ebayExampleCount: ebayItems.length,
         landedEstimate: viability.landedEstimate,
         minimumSalePrice: viability.minimumSalePrice,
-        minimumProfitGbp: researchMinimumProfitGbp,
+        minimumProfitGbp: evidence?.targetProfitGbp ?? researchMinimumProfitGbp,
+        breakdown: viability.breakdown,
+        transit: viability.transit,
+        handlingDays: evidence?.handlingDays ?? null,
+        comparisonBasis: evidence ? "Researched sold price" : "Active delivered median",
         medianGapPercent,
         priceHeadroom,
         shippingService: viability.shippingService,
         estimatedFees: fees,
         roughMargin,
         viableAtMedian: market && viability.minimumSalePrice != null ? viability.minimumSalePrice <= market * researchMedianAllowance : false,
-        score: Number(((priceHeadroom || -20) + match * 8 + Math.min(Number(product.stock || 0), 50) / 20).toFixed(2)),
+        score: Number(((priceHeadroom ?? -20) + match * 8).toFixed(2)),
         caution: viability.caution
       });
     }
@@ -1032,20 +1060,21 @@ async function researchOpportunities(url) {
   recommendations.sort((a, b) => b.score - a.score);
   return {
     category,
+    evidence,
     keyword,
     marketplace: process.env.EBAY_MARKETPLACE_ID || "EBAY_GB",
     generatedAt: new Date().toISOString(),
-    minimumProfitGbp: researchMinimumProfitGbp,
-    medianAllowancePercent: Math.round((researchMedianAllowance - 1) * 100),
+    minimumProfitGbp: evidence?.targetProfitGbp ?? researchMinimumProfitGbp,
+    medianAllowancePercent: evidence ? 0 : Math.round((researchMedianAllowance - 1) * 100),
     groups,
     recommendations: recommendations.slice(0, 12)
   };
 }
 
-async function researchViabilityForProduct(product, marketPrice, fx) {
+async function researchViabilityForProduct(product, marketPrice, fx, settings = {}) {
   const live = process.env.CJ_USE_LIVE === "true" && !isSampleProduct(product);
   if (live) {
-    const quoted = await cheapestCjQuoteForResearch(product).catch((error) => ({ error: error.message }));
+    const quoted = await cheapestCjQuoteForResearch(product, settings).catch((error) => ({ error: error.message }));
     if (quoted && !quoted.error) {
       return viabilityFromCosts({
         product,
@@ -1054,6 +1083,8 @@ async function researchViabilityForProduct(product, marketPrice, fx) {
         currency: "USD",
         usdToGbp: fx?.rate,
         marketPrice,
+        settings,
+        transit: quoted.transit,
         shippingService: quoted.shippingService,
         caution: fx?.rate ? "" : "Live USD to GBP rate unavailable; enter conversion before drafting."
       });
@@ -1065,10 +1096,10 @@ async function researchViabilityForProduct(product, marketPrice, fx) {
       caution: `CJ shipping quote unavailable: ${quoted?.error || "quote failed"}`
     };
   }
-  return viabilityFromCosts({ product, cost: product.cost, shipping: product.shipping, currency: "GBP", usdToGbp: 1, marketPrice, shippingService: "Sample shipping" });
+  return viabilityFromCosts({ product, cost: product.cost, shipping: product.shipping, currency: "GBP", usdToGbp: 1, marketPrice, settings, shippingService: "Sample shipping", caution: "Sample product: not a verified live CJ opportunity." });
 }
 
-async function cheapestCjQuoteForResearch(product) {
+async function cheapestCjQuoteForResearch(product, settings = {}) {
   const pid = product.pid || product.productId || product.cjProductId;
   if (!pid) throw new Error("CJ product ID missing.");
   const token = await getUsableCjToken();
@@ -1081,19 +1112,19 @@ async function cheapestCjQuoteForResearch(product) {
   let best = null;
   for (const variant of variants) {
     const quote = await cjQuoteVariant({ pid, vid: variant.vid }, token, variant);
-    const cheapest = (quote.quotes || []).slice().sort((a, b) => Number(a.price) - Number(b.price))[0];
+    const cheapest = eligibleResearchQuote(quote.quotes, settings);
     if (!cheapest) continue;
     const landed = Number(quote.cost) + Number(cheapest.price);
     if (!best || landed < best.landed) {
-      best = { cost: Number(quote.cost), shipping: Number(cheapest.price), shippingService: cheapest.name, landed };
+      best = { cost: Number(quote.cost), shipping: Number(cheapest.price), shippingService: cheapest.name, transit: cheapest.transit, landed };
     }
     await wait(250);
   }
-  if (!best) throw new Error("CJ returned no UK shipping options.");
+  if (!best) throw new Error("No quoted UK shipping option meets the delivery limit, or delivery timing is unknown.");
   return best;
 }
 
-function viabilityFromCosts({ product, cost, shipping, currency, usdToGbp, marketPrice, shippingService = "", caution = "" }) {
+function viabilityFromCosts({ product, cost, shipping, currency, usdToGbp, marketPrice, settings = {}, transit = "", shippingService = "", caution = "" }) {
   const rate = currency === "GBP" ? 1 : Number(usdToGbp);
   const hasCosts = Number.isFinite(Number(cost)) && Number.isFinite(Number(shipping)) && Number.isFinite(rate) && rate > 0;
   if (!hasCosts) {
@@ -1104,26 +1135,9 @@ function viabilityFromCosts({ product, cost, shipping, currency, usdToGbp, marke
       caution: caution || "Supplier item cost, shipping or currency conversion is missing."
     };
   }
-  const landedEstimate = Number(((Number(cost) + Number(shipping)) * rate).toFixed(2));
-  const minimumSalePrice = targetSalePrice({
-    source: product.source || "cj",
-    cjProductId: product.pid || product.cjProductId || "research",
-    cost,
-    shippingCost: shipping,
-    costCurrency: currency,
-    usdToGbp: rate,
-    pricingReviewed: true,
-    salePrice: marketPrice || landedEstimate,
-    feePercent: 12.8,
-    feeFixed: 0.3,
-    priceTargetType: "fixed",
-    targetProfitGbp: researchMinimumProfitGbp,
-    promotedListingEnabled: false,
-    otherCostsGbp: 0
-  }).price;
   return {
-    landedEstimate,
-    minimumSalePrice,
+    ...researchCostEstimate({ cost, shipping, currency, usdToGbp, marketPrice, settings }),
+    transit,
     shippingService,
     caution
   };
@@ -1145,7 +1159,7 @@ async function searchEbayMarket(term, token, options = {}) {
     image: item.image?.imageUrl || "",
     url: item.itemWebUrl || "",
     seller: item.seller?.username || "",
-    shippingCost: Number(item.shippingOptions?.[0]?.shippingCost?.value ?? 0),
+    shippingCost: item.shippingOptions?.[0]?.shippingCost?.value == null ? null : Number(item.shippingOptions[0].shippingCost.value),
     shippingCurrency: item.shippingOptions?.[0]?.shippingCost?.currency || item.price?.currency || "GBP"
   })).filter((item) => item.price > 0);
 }
@@ -1344,7 +1358,7 @@ async function publishDraft(draft) {
     const token = await getUsableEbayToken();
     draft = await alignDraftForEbayCategory(draft, token);
     draft = collapseSingleVariation(draft);
-    const categoryFailures = await ebayCategoryFailures(draft, token);
+    const categoryFailures = [...await ebayCategoryFailures(draft, token), ...variationErrors(draft)];
     if (categoryFailures.length) {
       return {
         ok: false,
@@ -2510,6 +2524,37 @@ function enqueueRepricing(options) {
 
 async function handleApi(req, res, url) {
   try {
+    if (url.pathname === "/api/research/import-preview" && req.method === "POST") {
+      try { sendJson(res, 200, previewResearchCsv((await readBody(req)).csv)); }
+      catch (error) { sendJson(res, 400, { error: error.message }); }
+      return;
+    }
+    if (url.pathname === "/api/research/ideas") {
+      try {
+        if (req.method === "GET") { sendJson(res, 200, { ideas: await readResearchIdeas() }); return; }
+        if (req.method === "POST" || req.method === "PUT") {
+          const body = await readBody(req);
+          if (!Array.isArray(body.ideas) || !body.ideas.length || body.ideas.length > 200) throw new Error("Supply 1 to 200 research products.");
+          const ideas = body.ideas.map((idea, index) => {
+            try { return normalizeResearchIdea(idea); }
+            catch (error) { throw new Error(`Product ${index + 1}: ${error.message}`); }
+          });
+          sendJson(res, 200, await updateResearchIdeas((existing) => {
+            if (req.method === "PUT") {
+              if (ideas.length !== 1 || !existing.some((idea) => idea.id === body.id)) throw new Error("Select one saved research product to update.");
+              return { ideas: existing.map((idea) => idea.id === body.id ? { ...ideas[0], id: idea.id } : idea) };
+            }
+            return mergeResearchIdeas(existing, ideas);
+          }));
+          return;
+        }
+        if (req.method === "DELETE") {
+          const id = (await readBody(req)).id;
+          sendJson(res, 200, await updateResearchIdeas((ideas) => ({ ideas: ideas.filter((idea) => idea.id !== id) })));
+          return;
+        }
+      } catch (error) { sendJson(res, 400, { error: error.message }); return; }
+    }
     if (req.method === "GET" && url.pathname === "/api/exchange-rate/usd-gbp") {
       res.setHeader("Cache-Control", "no-store");
       try {
@@ -2893,6 +2938,17 @@ async function handleApi(req, res, url) {
       const body = await readBody(req);
       const product = await enrichProductForDraft(body.product);
       const draft = makeDraftFromProduct(product);
+      if (body.researchIdeaId) {
+        const idea = (await readResearchIdeas()).find((entry) => entry.id === body.researchIdeaId);
+        if (!idea) throw new Error("The research reference was removed. Refresh the shortlist.");
+        Object.assign(draft, {
+          researchEvidence: idea, priceTargetType: "fixed", targetProfitGbp: idea.targetProfitGbp ?? 1,
+          feePercent: idea.feePercent ?? 12.8, feeFixed: idea.feeFixed ?? 0.3,
+          otherCostsGbp: idea.otherCostsGbp ?? 0,
+          promotedListingEnabled: Number(idea.adPercent) > 0, promotedAdRatePercent: idea.adPercent ?? 0,
+          pricingReviewed: false
+        });
+      }
       const store = await readStore();
       store.drafts.unshift(draft);
       await saveStore(store);

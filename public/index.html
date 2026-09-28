@@ -100,6 +100,45 @@
         </section>
 
         <section class="view" id="researchView">
+          <section id="researchShortlist" class="research-shortlist">
+            <h3>Product research shortlist</h3>
+            <a href="https://www.ebay.co.uk/sh/research" target="_blank" rel="noreferrer">Open free eBay Product Research</a>
+            <details>
+              <summary>Add researched product</summary>
+              <form data-manual class="research-entry">
+                <input type="hidden" name="id" />
+                <input type="hidden" name="source" value="ebay" />
+                <label>Product title<input name="title" required maxlength="300" /></label>
+                <label>eBay reference URL<input name="url" type="url" placeholder="https://www.ebay.co.uk/itm/..." /></label>
+                <label>Average sold price including postage (GBP)<input name="price" type="number" min="0.01" step="0.01" required /></label>
+                <label>Units sold in the period<input name="sales" type="number" min="1" step="1" required /></label>
+                <label>Sales period (days)<input name="days" type="number" min="1" max="365" step="1" value="30" required /></label>
+                <label>Sell-through (%) (optional)<input name="sellThrough" type="number" min="0" max="100" step="0.01" /></label>
+                <label>Sellers with sales (optional)<input name="sellers" type="number" min="0" step="1" /></label>
+                <label>Profit per sale (GBP)<input name="targetProfitGbp" type="number" min="0.01" step="0.01" value="1" required /></label>
+                <label>eBay fee (%)<input name="feePercent" type="number" min="0" max="99" step="0.01" value="12.8" required /></label>
+                <label>Fixed fee (GBP)<input name="feeFixed" type="number" min="0" step="0.01" value="0.30" required /></label>
+                <label>Promotion allowance (%)<input name="adPercent" type="number" min="0" max="99" step="0.01" value="0" required /></label>
+                <label>Other costs per sale (GBP)<input name="otherCostsGbp" type="number" min="0" step="0.01" value="0" required /></label>
+                <label>Maximum delivery (business days)<input name="maxDeliveryDays" type="number" min="1" max="90" value="15" required /></label>
+                <label>Processing allowance (business days)<input name="handlingDays" type="number" min="0" max="30" value="5" required /></label>
+                <button type="submit">Save research product</button>
+              </form>
+            </details>
+            <details>
+              <summary>Import research CSV</summary>
+              <label>Research export<input data-csv type="file" accept=".csv,text/csv" /></label>
+              <form data-mapping hidden>
+                <p data-preview class="meta"></p>
+                <div data-columns class="research-entry"></div>
+                <label>Sales period in this export (days)<input name="days" type="number" min="1" max="365" /></label>
+                <label>Research source<select name="source"><option value="ebay">eBay Product Research</option><option value="manual">Other research</option><option value="zik">Existing ZIK export</option></select></label>
+                <button type="submit">Import selected columns</button>
+              </form>
+            </details>
+            <p data-status role="status" aria-live="polite"></p>
+            <div data-shortlist></div>
+          </section>
           <form class="toolbar" id="researchForm">
             <label>
               Niche or product
@@ -108,7 +147,7 @@
             <label>
               Research category
               <select id="researchCategoryInput" name="category">
-                <option value="trending">Trending</option>
+                <option value="trending">General ideas</option>
                 <option value="fashion">Fashion</option>
                 <option value="electronics">Electronics</option>
                 <option value="home">Home</option>

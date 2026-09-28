@@ -58,7 +58,47 @@ export function prepareListing(draft) {
     quantity: rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0) };
 }
 
+export function requiresStandardAspect(aspect) {
+  return aspect?.aspectConstraint?.aspectMode === "SELECTION_ONLY" ||
+    (aspect?.localizedAspectName === "Size" && aspect.aspectValues?.length > 0);
+}
+
+export function supportedAspectValues(aspect, specifics = {}) {
+  const values = aspectMap(specifics);
+  return (aspect?.aspectValues || []).filter((option) => (option.valueConstraints || []).every((constraint) =>
+    (values[constraint.applicableForLocalizedAspectName] || []).some((value) => constraint.applicableForLocalizedAspectValues?.includes(value))
+  )).map((option) => option.localizedValue).filter(Boolean);
+}
+
+export function standardAspectValue(value, aspect, specifics = {}) {
+  const original = String(value ?? "").trim();
+  const options = supportedAspectValues(aspect, specifics);
+  if (options.includes(original)) return original;
+  const key = (text) => {
+    const cleaned = text.trim().toUpperCase().replace(/\s+/g, " ");
+    if (aspect?.localizedAspectName !== "Size") return cleaned;
+    // Only spelling equivalents, never convert regional sizes or measurements.
+    return cleaned.replace(/^(X{2,5})([LS])$/, (_, xs, suffix) => `${xs.length}X${suffix}`);
+  };
+  const matches = options.filter((option) => key(option) === key(original));
+  return matches.length === 1 ? matches[0] : original;
+}
+
+export function standardizeAspectValues(draft, schema) {
+  if (!schema || schema.categoryId !== draft.ebayCategoryId) return draft;
+  const normalize = (specifics, context) => Object.fromEntries(Object.entries(specifics || {}).map(([name, value]) => {
+    const aspect = schema.aspects?.find((item) => item.localizedAspectName === name);
+    if (!aspect || !requiresStandardAspect(aspect)) return [name, value];
+    return [name, Array.isArray(value) ? value.map((item) => standardAspectValue(item, aspect, context)) : standardAspectValue(value, aspect, context)];
+  }));
+  const itemSpecifics = normalize(draft.itemSpecifics, draft.itemSpecifics);
+  return { ...draft, itemSpecifics, listingVariants: draft.listingVariants?.map((row) => ({
+    ...row, aspects: normalize(row.aspects, { ...itemSpecifics, ...row.aspects })
+  })) };
+}
+
 export function alignVariationAxesToSchema(draft, schema) {
+  draft = standardizeAspectValues(draft, schema);
   if (!draft.multiVariation || !schema || schema.categoryId !== draft.ebayCategoryId) return draft;
   const supported = (schema.aspects || []).filter((aspect) => aspect.aspectConstraint?.aspectEnabledForVariations).map((aspect) => aspect.localizedAspectName);
   if (!supported.length) return draft;
@@ -146,7 +186,12 @@ export function categoryErrors(draft, schema) {
       if (rule.aspectRequired && !values[name]?.length) errors.push(`Required item specific: ${name}.`);
       if (values[name]?.length > 1 && rule.itemToAspectCardinality === "SINGLE") errors.push(`${name} accepts one value.`);
       if (rule.aspectMaxLength && values[name]?.some((value) => value.length > rule.aspectMaxLength)) errors.push(`${name} exceeds eBay's length limit.`);
-      if (rule.aspectMode === "SELECTION_ONLY" && values[name]?.some((value) => !(aspect.aspectValues || []).some((option) => option.localizedValue === value))) errors.push(`Choose an eBay-supported value for ${name}.`);
+      if (requiresStandardAspect(aspect)) {
+        const supported = supportedAspectValues(aspect, values);
+        for (const value of values[name] || []) {
+          if (!supported.includes(value)) errors.push(`${row.label || row.sku || "Item"}: ${name} "${value}" is not supported by eBay. ${supported.length ? `Choose: ${supported.slice(0, 20).join(", ")}${supported.length > 20 ? ", ..." : ""}.` : "Load the category and select its controlling item specifics first."}`);
+        }
+      }
     }
   }
   return [...new Set(errors)];

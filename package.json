@@ -12,6 +12,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "csv-parse": "^7.0.3",
     "pg": "^8.23.0"
   }
 }

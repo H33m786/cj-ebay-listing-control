@@ -1637,3 +1637,16 @@ pre {
   width: 18px;
   height: 18px;
 }
+
+.research-shortlist { padding: 20px 0; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+.research-shortlist details { margin: 16px 0; }
+.research-shortlist summary { cursor: pointer; margin-bottom: 12px; }
+.research-entry { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; align-items: end; }
+.research-idea { border-top: 1px solid var(--line); padding: 16px 0; overflow-wrap: anywhere; }
+.research-idea-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.research-shortlist [data-preview] { overflow-wrap: anywhere; }
+.research-shortlist input, .research-shortlist select { max-width: 100%; min-width: 0; }
+.research-shortlist button { min-height: 42px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+.research-shortlist button:hover:not(:disabled) { border-color: var(--accent); }
+.research-shortlist button:disabled { opacity: 0.5; cursor: wait; }
+.research-shortlist a { color: var(--accent); }

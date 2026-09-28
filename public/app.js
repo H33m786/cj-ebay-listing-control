@@ -1,9 +1,10 @@
 import { draftPricing, targetSalePrice, applyTargetPrice } from "./pricing.js";
-import { listingRows, mainListingRowIndex, variationErrors, categoryErrors, alignVariationAxesToSchema, collapseSingleVariation } from "./listing.js";
+import { listingRows, mainListingRowIndex, variationErrors, categoryErrors, alignVariationAxesToSchema, collapseSingleVariation, requiresStandardAspect, supportedAspectValues, standardAspectValue } from "./listing.js";
 import { buildDraftDescription } from "./description.js";
 import { compareDraftToMarket, marketSearchTerm, prePublishChecklist } from "./market.js";
 import { riskyTermsForDraft, saferRiskWording } from "./risk-terms.js";
 import { createOrdersView } from "./orders.js";
+import { createResearchShortlist } from "./research-shortlist.js";
 const ordersView = createOrdersView(document.querySelector("#ordersView"));
 import { createRepricingView } from "./repricing.js";
 const repricingView = createRepricingView(document.querySelector("#repricingView"));
@@ -953,6 +954,7 @@ function matchesCategory(product, category) {
 }
 
 function setView(name) {
+  if (name === "research") researchShortlist.load();
   if (name === "repricing") repricingView.load();
   else repricingView.clear();
   if (name === "orders") ordersView.load();
@@ -1099,13 +1101,13 @@ function titleWords(value) {
   return String(value || "").toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2 && !stop.has(word)).slice(0, 12);
 }
 
-async function loadResearch() {
+async function loadResearch(idea = null) {
   const results = $("#researchResults");
   const keyword = encodeURIComponent($("#researchKeywordInput").value.trim());
   const category = encodeURIComponent($("#researchCategoryInput").value);
   results.innerHTML = '<div class="empty-state">Checking eBay market prices and matching CJ products...</div>';
   try {
-    state.research = await api(`/api/research/opportunities?keyword=${keyword}&category=${category}`);
+    state.research = await api(`/api/research/opportunities?keyword=${keyword}&category=${category}${idea ? `&ideaId=${encodeURIComponent(idea.id)}` : ""}`);
     renderResearch();
   } catch (error) {
     results.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
@@ -1120,15 +1122,16 @@ function renderResearch() {
     return;
   }
   results.innerHTML = `
+    ${research.evidence ? `<section class="research-panel"><h3>Research reference: ${escapeHtml(research.evidence.title)}</h3><p class="meta">${research.evidence.sales == null ? "No sales figures supplied." : `${escapeHtml(research.evidence.sales)} units over ${escapeHtml(research.evidence.days)} days, supplied by you; not independently verified.`} Similar CJ products may perform differently.</p></section>` : ""}
     <section class="research-panel">
       <h3>eBay market snapshot</h3>
-      <p class="meta">Recommendations are filtered to products where CJ landed cost plus fees can still reach about ${money(research.minimumProfitGbp ?? 1)} profit within ${escapeHtml(research.medianAllowancePercent ?? 5)}% of the eBay median.</p>
+      <p class="meta">${research.evidence ? `Compared with your researched sold price including postage. Candidates must meet ${money(research.minimumProfitGbp)} profit after your entered fees and costs, within ${escapeHtml(research.evidence.maxDeliveryDays ?? 15)} business days including processing. Supplier timing is an estimate.` : `Active GBP listing prices including known delivery charges, not completed sales. Candidates target ${money(research.minimumProfitGbp ?? 1)} profit within ${escapeHtml(research.medianAllowancePercent ?? 5)}% of the median.`}</p>
       <div class="research-terms">
         ${(research.groups || []).map((group) => `
           <article class="research-term">
             <strong>${escapeHtml(group.term)}</strong>
-            <span>${money(group.medianPrice)} median / ${group.ebayItems?.length || 0} eBay examples / ${group.viableCount ?? 0} viable of ${group.cjCount || 0} CJ matches</span>
-            ${group.rejectedByPrice ? `<p class="meta">${escapeHtml(group.rejectedByPrice)} skipped because the minimum viable price was above the median target.</p>` : ""}
+            <span>${money(group.medianPrice)} ${research.evidence ? "researched sold price" : "active delivered median"} / ${group.viableCount ?? 0} viable of ${group.cjCount || 0} CJ candidates checked</span>
+            ${group.rejectedByPrice ? `<p class="meta">${escapeHtml(group.rejectedByPrice)} excluded by price, delivery, missing data or weak title match.</p>` : ""}
             ${(group.ebayItems || []).slice(0, 3).map((item) => `<p class="meta">${escapeHtml(item.title)} / ${money(item.price, item.currency || "GBP")}${item.url ? ` / <a href="${escapeAttr(item.url)}" target="_blank" rel="noreferrer">View</a>` : ""}</p>`).join("")}
           </article>
         `).join("")}
@@ -1150,7 +1153,7 @@ function renderResearch() {
       try {
         const result = await api("/api/drafts", {
           method: "POST",
-          body: JSON.stringify({ product: recommendation.product })
+          body: JSON.stringify({ product: recommendation.product, researchIdeaId: state.research.evidence?.id })
         });
         state.drafts.unshift(result.draft);
         state.selectedDraftId = result.draft.id;
@@ -1175,14 +1178,16 @@ function researchRecommendationMarkup(item, index) {
         <p class="eyebrow">${escapeHtml(item.term || "Opportunity")}</p>
         <h3>${escapeHtml(product.title || product.productNameEn || "CJ product")}</h3>
         <div class="detail-metrics">
-          <div class="metric"><span>eBay median</span><strong>${money(item.ebayMedianPrice)}</strong></div>
+          <div class="metric"><span>${escapeHtml(item.comparisonBasis || "Active delivered median")}</span><strong>${money(item.ebayMedianPrice)}</strong></div>
           <div class="metric"><span>CJ landed</span><strong>${money(item.landedEstimate)}</strong></div>
           <div class="metric"><span>Minimum viable</span><strong>${money(item.minimumSalePrice)}</strong></div>
-          <div class="metric"><span>Median gap</span><strong>${item.medianGapPercent == null ? "Unknown" : `${item.medianGapPercent > 0 ? "+" : ""}${escapeHtml(item.medianGapPercent)}%`}</strong></div>
+          <div class="metric"><span>Price gap</span><strong>${item.medianGapPercent == null ? "Unknown" : `${item.medianGapPercent > 0 ? "+" : ""}${escapeHtml(item.medianGapPercent)}%`}</strong></div>
           <div class="metric"><span>Rough margin</span><strong>${money(item.roughMargin)}</strong></div>
-          <div class="metric"><span>Score</span><strong>${escapeHtml(item.score ?? "0")}</strong></div>
+          <div class="metric"><span>Fees at reference price</span><strong>${money(item.estimatedFees)}</strong></div>
         </div>
         <p class="meta">${item.shippingService ? `Cheapest CJ shipping: ${escapeHtml(item.shippingService)}. ` : ""}The minimum viable price includes CJ landed cost, estimated eBay fees, and ${money(item.minimumProfitGbp ?? 1)} profit.</p>
+        ${item.transit ? `<p class="meta">Transit: ${escapeHtml(item.transit)} days; processing allowance: ${escapeHtml(item.handlingDays ?? 5)} business days. Quote is for one sampled variant.</p>` : ""}
+        ${item.breakdown ? `<p class="meta">Item ${money(item.breakdown.itemCostGbp)} + shipping ${money(item.breakdown.shippingCostGbp)} + other costs ${money(item.breakdown.otherCostsGbp)}. eBay fee ${escapeHtml(item.breakdown.feePercent)}% + ${money(item.breakdown.feeFixed)}; promotion allowance ${escapeHtml(item.breakdown.promotedAdRatePercent)}%.</p>` : ""}
         ${item.caution ? `<p class="inline-status">${escapeHtml(item.caution)}</p>` : ""}
         <button type="button" data-research-index="${index}">Create draft</button>
       </div>
@@ -1472,6 +1477,15 @@ function variationsMarkup(draft) {
   const rows = defaultListingVariants(draft);
   const enabledCount = rows.filter((row) => row.enabled).length;
   const axisOptions = (selected) => supportedAxes.map((axis) => `<option value="${escapeAttr(axis)}" ${axis === selected ? "selected" : ""}>${escapeHtml(axis)}</option>`).join("");
+  const aspectInput = (row, axis) => {
+    const aspect = draft.ebayCategorySchema?.categoryId === draft.ebayCategoryId ? draft.ebayCategorySchema.aspects?.find((item) => item.localizedAspectName === axis) : null;
+    const context = { ...draft.itemSpecifics, ...row.aspects };
+    const value = standardAspectValue(row.aspects?.[axis] || "", aspect, context);
+    const attrs = `data-field="aspect" data-axis="${escapeAttr(axis)}" aria-label="${escapeAttr(axis)}" title="${escapeAttr(axis)} buyers will choose on eBay"`;
+    if (!requiresStandardAspect(aspect)) return `<input ${attrs} value="${escapeAttr(value)}" />`;
+    const options = supportedAspectValues(aspect, context);
+    return `<select ${attrs}><option value="">Choose ${escapeHtml(axis)}</option>${value && !options.includes(value) ? `<option value="${escapeAttr(value)}" selected>${escapeHtml(value)} (unsupported - choose a value)</option>` : ""}${options.map((option) => `<option value="${escapeAttr(option)}" ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select>`;
+  };
   return `
     <section class="wide variation-builder" id="variationBuilder">
       <label class="pricing-confirmation"><input name="multiVariation" type="checkbox" ${draft.multiVariation ? "checked" : ""} /> Publish as one eBay listing with selectable variants</label>
@@ -1505,7 +1519,7 @@ function variationsMarkup(draft) {
             <div class="variation-row" data-index="${index}">
               <label><input type="checkbox" data-field="enabled" ${row.enabled ? "checked" : ""} /> Use</label>
               <span>${escapeHtml(row.label)}</span>
-              ${axes.map((axis, axisIndex) => `<input data-field="aspect" data-axis="${escapeAttr(axis)}" value="${escapeAttr(row.aspects?.[axis] || "")}" aria-label="${escapeAttr(axis)}" title="${escapeAttr(axis)} buyers will choose on eBay" placeholder="${axisIndex === 0 ? "Black" : "Option"}" />`).join("")}
+              ${axes.map((axis) => aspectInput(row, axis)).join("")}
               <input data-field="quantity" type="number" min="0" value="${escapeAttr(row.quantity ?? 1)}" aria-label="Quantity" title="How many units to make available for this variant" />
               <input data-field="cost" type="number" step="0.01" min="0" value="${row.cost ?? ""}" aria-label="Item cost" title="CJ product cost for this exact variant, before shipping" placeholder="0.00" />
               <input data-field="shippingCost" type="number" step="0.01" min="0" value="${row.shippingCost ?? ""}" aria-label="Shipping cost" title="CJ shipping cost for this exact variant" placeholder="0.00" />
@@ -1537,11 +1551,12 @@ function itemSpecificsMarkup(draft) {
   const fieldMarkup = fields.map((name) => {
     const aspect = schema?.aspects?.find((item) => item.localizedAspectName === name);
     const rule = aspect?.aspectConstraint || {};
-    const values = (aspect?.aspectValues || []).map((item) => item.localizedValue).filter(Boolean);
+    const values = supportedAspectValues(aspect, specifics);
     const required = rule.aspectRequired ? " required" : "";
     const label = `${escapeHtml(name)}${rule.aspectRequired ? " *" : ""}`;
-    if (values.length && values.length <= 80 && rule.aspectMode === "SELECTION_ONLY") {
-      return `<label>${label}<select name="specific.${escapeAttr(name)}"${required}><option value="">Select</option>${values.map((value) => `<option value="${escapeAttr(value)}" ${String(specifics[name] || "") === value ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>`;
+    if (requiresStandardAspect(aspect)) {
+      const selected = standardAspectValue(specifics[name] || "", aspect, specifics);
+      return `<label>${label}<select name="specific.${escapeAttr(name)}"${required}><option value="">Select</option>${selected && !values.includes(selected) ? `<option value="${escapeAttr(selected)}" selected>${escapeHtml(selected)} (unsupported - choose a value)</option>` : ""}${values.map((value) => `<option value="${escapeAttr(value)}" ${selected === value ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>`;
     }
     return `<label>${label}<input name="specific.${escapeAttr(name)}" value="${escapeAttr(specifics[name] || "")}"${required} /></label>`;
   }).join("");
@@ -1744,7 +1759,11 @@ function renderEditor(draft) {
         const enabled = node.querySelector('[data-field="enabled"]');
         if (enabled) enabled.checked = row.enabled === true;
         node.querySelectorAll('[data-field="aspect"]').forEach((input) => {
-          if (document.activeElement !== input) input.value = row.aspects?.[input.dataset.axis] || "";
+          const axis = input.dataset.axis;
+          const aspect = current.ebayCategorySchema?.aspects?.find((item) => item.localizedAspectName === axis);
+          const value = standardAspectValue(row.aspects?.[axis] || "", aspect, { ...current.itemSpecifics, ...row.aspects });
+          row.aspects = { ...row.aspects, [axis]: value };
+          if (document.activeElement !== input) input.value = value;
         });
         setInputValue(node, "quantity", row.quantity ?? 1);
         setInputValue(node, "cost", row.cost ?? "");
@@ -3182,6 +3201,15 @@ async function loadAll() {
   renderPublished();
   await loadProducts();
 }
+
+const researchShortlist = createResearchShortlist($("#researchShortlist"), {
+  api,
+  async findMatches(idea) {
+    $("#researchKeywordInput").value = marketSearchTerm({ title: idea.title });
+    await loadResearch(idea);
+    $("#researchResults").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+});
 
 document.querySelectorAll(".nav-tab").forEach((button) => {
   button.addEventListener("click", () => setView(button.dataset.view));
