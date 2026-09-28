@@ -1057,12 +1057,12 @@ function productListingStatus(product) {
   const pid = String(product.pid || product.cjProductId || product.productId || "").trim();
   const sku = String(product.sku || product.productSku || "").trim();
   const title = String(product.title || product.productNameEn || "").trim();
-  const published = state.published.find((item) => productMatchesListing(product, item, { allowTitle: false }));
+  const published = state.published.find((item) => item.status !== "withdrawn" && item.publishedMode !== "simulated" && productMatchesListing(product, item, { allowTitle: false }));
   if (published) {
-    return { level: "published", label: "Already on eBay", detail: `${published.title || "Published listing"}${published.ebayListingId ? ` / eBay ${published.ebayListingId}` : ""}` };
+    return { level: "published", item: published, label: published.publishedMode === "sandbox" ? "Already listed (sandbox)" : "Already listed", detail: `${published.title || "Published listing"}${published.ebayListingId ? ` / eBay ${published.ebayListingId}` : ""}` };
   }
   const draft = state.drafts.find((item) => productMatchesListing(product, item, { allowTitle: false }));
-  if (draft) return { level: "draft", label: "Draft exists", detail: draft.title || "This CJ product is already in Drafts." };
+  if (draft) return { level: "draft", item: draft, label: "Draft exists", detail: draft.title || "This CJ product is already in Drafts." };
   const possible = state.published.find((item) => productMatchesListing(product, item, { allowTitle: true }));
   if (possible && title.length > 20) return { level: "possible", label: "Possible match", detail: `Similar title in Published: ${possible.title}` };
   if (pid || sku) return { level: "", label: "", detail: "" };
@@ -1158,7 +1158,13 @@ function renderResearch() {
       </div>
     </section>
     ${research.excluded?.length ? `<section class="research-panel"><h3>Excluded candidates</h3><div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>CJ product</th><th>Reason</th><th>Required price</th><th>eBay median</th></tr></thead><tbody>${research.excluded.map((item) => `<tr><td>${escapeHtml(item.title)}</td><td>${escapeHtml(item.reason)}</td><td>${money(item.minimumSalePrice)}</td><td>${money(item.medianPrice)}</td></tr>`).join("")}</tbody></table></div></section>` : ""}
+    ${research.existingResults?.length ? `<section class="research-panel"><h3>Already in your catalogue</h3><div class="research-recommendations">${research.existingResults.map((item) => researchRecommendationMarkup(item, -1)).join("")}</div></section>` : ""}
   `;
+  results.querySelectorAll("[data-existing-draft]").forEach((button) => button.addEventListener("click", () => {
+    state.selectedDraftId = button.dataset.existingDraft;
+    renderDrafts();
+    setView("drafts");
+  }));
   results.querySelector("[data-next-research]")?.addEventListener("click", () => {
     const previous = state.researchQuery;
     const unchanged = previous && previous.keyword === encodeURIComponent($("#researchKeywordInput").value.trim()) && previous.category === encodeURIComponent($("#researchCategoryInput").value) && previous.mode === $("#researchModeInput").value && previous.profit === encodeURIComponent($("#researchProfitInput").value);
@@ -1176,6 +1182,7 @@ function renderResearch() {
           body: JSON.stringify({ product: recommendation.product, researchIdeaId: state.research.evidence?.id, researchTargetProfitGbp: state.research.mode === "ebay-first" ? recommendation.minimumProfitGbp : undefined })
         });
         state.drafts.unshift(result.draft);
+        renderResearch();
         state.selectedDraftId = result.draft.id;
         renderDrafts();
         renderCounts();
@@ -1191,6 +1198,14 @@ function renderResearch() {
 
 function researchRecommendationMarkup(item, index) {
   const product = item.product || {};
+  const status = item.existing ? {
+    level: item.existing.status, item: item.existing,
+    label: item.existing.status === "published" ? (item.existing.publishedMode === "sandbox" ? "Already listed (sandbox)" : "Already listed") : "Draft exists"
+  } : productListingStatus(product);
+  if (status.level === "published" || status.level === "draft") {
+    const url = status.level === "published" ? ebayListingUrl(status.item) : "";
+    return `<article class="research-card">${productVisual(product)}<div><span class="badge">${escapeHtml(status.label)}</span><h3>${escapeHtml(product.title || product.productNameEn || "CJ product")}</h3>${url ? `<a href="${escapeAttr(url)}" target="_blank" rel="noreferrer">View your eBay listing</a>` : status.level === "draft" ? `<button type="button" data-existing-draft="${escapeAttr(status.item.id)}">Open draft</button>` : ""}</div></article>`;
+  }
   return `
     <article class="research-card">
       ${productVisual(product)}

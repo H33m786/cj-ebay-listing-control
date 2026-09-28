@@ -86,6 +86,24 @@ test("batch values are validated and retained", () => {
   for (const batch of ["-1", "0", "1.5", "101", "bad"]) assert.throws(() => discoverySettings(new URLSearchParams({ batch })));
 });
 
+test("existing published products are labelled without spending shipping requests", async () => {
+  const result = await ebayFirstResearch(options({ existing: [
+    { id: "draft1", cjProductId: "CJ1" },
+    { id: "live1", cjProductId: "CJ1", ebayListingId: "12345", publishedMode: "production" }
+  ] }));
+  assert.equal(result.quoted, 0);
+  assert.equal(result.existingResults.length, 1);
+  assert.equal(result.existingResults[0].existing.status, "published");
+  assert.equal(result.existingResults[0].existing.ebayListingId, "12345");
+});
+
+test("existing drafts get their own status and withdrawn listings do not block research", async () => {
+  const draft = await ebayFirstResearch(options({ existing: [{ id: "draft1", cjProductId: "CJ1" }] }));
+  assert.equal(draft.existingResults[0].existing.status, "draft");
+  const withdrawn = await ebayFirstResearch(options({ existing: [{ cjProductId: "CJ1", status: "withdrawn", ebayListingId: "12345" }] }));
+  assert.equal(withdrawn.recommendations.length, 1);
+});
+
 const peers = Array.from({ length: 3 }, (_, i) => ({ title: "USB desk lamp", itemId: String(i), price: 20, currency: "GBP", shippingCost: 2, shippingCurrency: "GBP" }));
 function options(overrides = {}) {
   return { terms: ["electronics"], settings: discoverySettings(new URLSearchParams()),

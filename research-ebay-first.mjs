@@ -62,13 +62,18 @@ function delivered(item) {
 }
 
 export async function ebayFirstResearch({ terms, settings, existing = [], searchEbay, searchCj, quote, match }) {
-  const known = new Set(existing.map((item) => String(item.cjProductId || item.pid || "")).filter(Boolean));
+  const known = new Map();
+  for (const item of existing) {
+    const id = String(item.cjProductId || item.pid || "");
+    if (id && item.status !== "withdrawn" && (!known.has(id) || item.ebayListingId)) known.set(id, item);
+  }
   const seen = new Set();
   const searches = new Set();
   const recommendations = [];
   const groups = [];
   const warnings = [];
   const excluded = [];
+  const existingResults = [];
   const comparisonCache = new Map();
   let alreadyAdded = 0;
   let quoted = 0;
@@ -99,7 +104,13 @@ export async function ebayFirstResearch({ terms, settings, existing = [], search
         for (const product of products.slice(0, 20)) {
           const id = String(product.pid || product.cjProductId || "");
           if (!id || seen.has(id)) continue;
-          if (known.has(id)) { alreadyAdded += 1; seen.add(id); continue; }
+          if (known.has(id)) {
+            alreadyAdded += 1;
+            seen.add(id);
+            const listing = known.get(id);
+            existingResults.push({ product, term, existing: { id: listing.id, title: listing.title, ebayListingId: listing.ebayListingId, publishedMode: listing.publishedMode, status: listing.ebayListingId ? "published" : "draft" } });
+            continue;
+          }
           const similarity = chargerSearch ? { score: chargerSearchMatches(niche, product.title) ? 1 : 0, reason: "Does not match the charger requirements in your search." } : discoveryMatch(source.title, product.title, match);
           if (similarity.score < 0.6) {
             group.rejectedByPrice += 1;
@@ -150,6 +161,6 @@ export async function ebayFirstResearch({ terms, settings, existing = [], search
     } catch (error) { warnings.push(`${niche}: ${error.message}`); }
   }
   recommendations.sort((a, b) => b.priceHeadroom - a.priceHeadroom);
-  return { mode: "ebay-first", batch: settings.batch, groups, recommendations, excluded, warnings, alreadyAdded, quoted,
+  return { mode: "ebay-first", batch: settings.batch, groups, recommendations, existingResults, excluded, warnings, alreadyAdded, quoted,
     minimumProfitGbp: settings.targetProfitGbp, medianAllowancePercent: 0, generatedAt: new Date().toISOString() };
 }

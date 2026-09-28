@@ -1001,7 +1001,7 @@ async function researchOpportunities(url) {
     const fx = await fetchUsdToGbpRate();
     const store = await readStore();
     return ebayFirstResearch({ terms, settings,
-      existing: [...(store.drafts || []), ...(store.published || []).filter((item) => item.status !== "withdrawn")],
+      existing: [...(store.drafts || []), ...(store.published || []).filter((item) => item.status !== "withdrawn" && item.publishedMode === ebayEnvironment())],
       searchEbay: (term) => searchEbayMarket(term, token, { offset: (settings.batch - 1) * 12 }),
       searchCj: async (term) => {
         const query = new URL("http://local/api/products");
