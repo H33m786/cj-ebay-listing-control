@@ -14,6 +14,7 @@
   <div class="topbar-left">
     <h1>projindex</h1>
     <span class="subtitle">local control panel</span>
+    <span id="configInfo" class="subtitle" title="Active configuration and database"></span>
   </div>
   <div class="topbar-right">
     <label for="backendUrl">Backend</label>
@@ -169,6 +170,13 @@
     </div>
     <p class="hint">Cases where a project's own files disagree about one fact. Resolution always needs a reason.</p>
     <div id="conflictsList" class="review-list"></div>
+
+    <div class="panel-head" style="margin-top:28px">
+      <h2>Entity kind conflicts</h2>
+      <button class="btn ghost" data-action="refresh-entity-kinds">Refresh</button>
+    </div>
+    <p class="hint">Review names the model assigned to more than one kind. Merge only when they represent the same entity.</p>
+    <div id="entityKindList" class="review-list"></div>
   </section>
 
 </main>
@@ -177,4 +185,3 @@
 <script src="app.js"></script>
 </body>
 </html>
-
