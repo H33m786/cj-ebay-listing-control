@@ -65,8 +65,10 @@ async function refreshStatus() {
   try {
     const data = await apiGet("/api/status");
     const configInfo = document.getElementById("configInfo");
-    configInfo.textContent = `config: ${data.config_path || "?"} · db: ${data.db_path || "?"}`;
-    configInfo.title = configInfo.textContent;
+    if (configInfo) {
+      configInfo.textContent = `config: ${data.config_path || "?"} · db: ${data.db_path || "?"}`;
+      configInfo.title = configInfo.textContent;
+    }
     grid.innerHTML = "";
     const order = ["projects", "files", "segments", "content_facts", "entities", "entity_mentions", "tasks", "dropped_facts"];
     const keys = order.filter((k) => k in data.table_counts).concat(Object.keys(data.table_counts).filter((k) => !order.includes(k)));
