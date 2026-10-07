@@ -64,6 +64,9 @@ async function refreshStatus() {
   const grid = document.getElementById("statGrid");
   try {
     const data = await apiGet("/api/status");
+    const configInfo = document.getElementById("configInfo");
+    configInfo.textContent = `config: ${data.config_path || "?"} · db: ${data.db_path || "?"}`;
+    configInfo.title = configInfo.textContent;
     grid.innerHTML = "";
     const order = ["projects", "files", "segments", "content_facts", "entities", "entity_mentions", "tasks", "dropped_facts"];
     const keys = order.filter((k) => k in data.table_counts).concat(Object.keys(data.table_counts).filter((k) => !order.includes(k)));
@@ -116,6 +119,10 @@ async function pollJob(stage, jobId) {
       return;
     }
     if (job.status === "running") continue;
+    if (job.status === "interrupted") {
+      setStageStatus(stage, "interrupted by a server restart — re-run this stage", "error");
+      return;
+    }
     if (job.status === "done") {
       setStageStatus(stage, summarizeResult(job.result), "ok");
       refreshStatus();
@@ -337,7 +344,7 @@ function renderGraph(rawNodes, rawEdges) {
   }
 }
 
-function showDetail(d, links, byId) {
+async function showDetail(d, links, byId) {
   const panel = document.getElementById("graphDetail");
   panel.hidden = false;
   const conns = links.filter((l) => {
@@ -353,6 +360,18 @@ function showDetail(d, links, byId) {
   panel.innerHTML = `<h4>${escapeHtml(d.label)}</h4>` +
     `<div class="k">${d.type === "project" ? "Project" : d.kind}</div>` +
     conns.map((c) => `<div class="conn-row"><span>${escapeHtml(c.label)}</span><span>${c.weight}&times;</span></div>`).join("");
+  if (d.type === "entity") {
+    const examplesBox = document.createElement("div");
+    examplesBox.className = "excerpt";
+    examplesBox.textContent = "Loading source examples…";
+    panel.appendChild(examplesBox);
+    try {
+      const data = await apiGet(`/api/entity-examples?kind=${encodeURIComponent(d.kind)}&canonical=${encodeURIComponent(d.label)}`);
+      examplesBox.innerHTML = data.examples.length ? data.examples.map((e) =>
+        `<div><strong>${escapeHtml(e.project_name)} / ${escapeHtml(e.rel_path)}</strong><br>${escapeHtml(e.excerpt)}</div>`
+      ).join("<hr>") : "No source examples found.";
+    } catch (e) { examplesBox.textContent = e.message; }
+  }
 }
 function hideDetail() { document.getElementById("graphDetail").hidden = true; }
 
@@ -454,9 +473,69 @@ document.querySelector('[data-action="detect-conflicts"]').addEventListener("cli
   } catch (e) { alert(e.message); }
 });
 
+async function refreshEntityKinds() {
+  const box = document.getElementById("entityKindList");
+  box.innerHTML = `<div class="empty-note">Loading…</div>`;
+  try {
+    const data = await apiGet("/api/entity-kind-splits?limit=100");
+    if (!data.items.length) { box.innerHTML = `<div class="empty-note">No unresolved entity kind conflicts.</div>`; return; }
+    box.innerHTML = "";
+    data.items.forEach((item) => {
+      const card = document.createElement("div");
+      card.className = "review-card";
+      card.innerHTML = `<div class="meta">${item.total_mentions} mentions</div>
+        <div class="value">${escapeHtml(item.canonical)}</div>
+        <div class="actions"></div>
+        <input type="text" class="reason-input" placeholder="Reason (required)">
+        <div class="examples"></div>`;
+      const actions = card.querySelector(".actions");
+      const reasonInput = card.querySelector(".reason-input");
+      item.kinds.forEach((kind) => {
+        const view = document.createElement("button");
+        view.className = "btn small";
+        view.textContent = `View ${kind.kind} examples (${kind.mentions})`;
+        view.addEventListener("click", async () => {
+          const panel = card.querySelector(".examples");
+          panel.textContent = "Loading…";
+          try {
+            const data = await apiGet(`/api/entity-examples?kind=${encodeURIComponent(kind.kind)}&canonical=${encodeURIComponent(item.canonical)}`);
+            panel.innerHTML = data.examples.map((e) => `<div class="excerpt"><strong>${escapeHtml(e.project_name)} / ${escapeHtml(e.rel_path)}</strong><br>${escapeHtml(e.excerpt)}</div>`).join("") || "No examples found.";
+          } catch (e) { panel.textContent = e.message; }
+        });
+        actions.appendChild(view);
+        const merge = document.createElement("button");
+        merge.className = "btn small";
+        merge.textContent = `Merge into ${kind.kind}`;
+        merge.addEventListener("click", async () => {
+          const reason = reasonInput.value.trim();
+          if (!reason) { reasonInput.focus(); return; }
+          try {
+            await apiPost("/api/entity-kind-splits/merge", {canonical:item.canonical,target_kind:kind.kind,reason});
+            card.textContent = "Merged.";
+          } catch (e) { alert(e.message); }
+        });
+        actions.appendChild(merge);
+      });
+      const distinct = document.createElement("button");
+      distinct.className = "btn small";
+      distinct.textContent = "Confirm genuinely distinct";
+      distinct.addEventListener("click", async () => {
+        const reason = reasonInput.value.trim();
+        if (!reason) { reasonInput.focus(); return; }
+        try {
+          await apiPost("/api/entity-kind-splits/confirm-distinct", {canonical:item.canonical,reason});
+          card.textContent = "Confirmed distinct.";
+        } catch (e) { alert(e.message); }
+      });
+      actions.appendChild(distinct);
+      box.appendChild(card);
+    });
+  } catch (e) { box.innerHTML = `<div class="empty-note">${escapeHtml(e.message)}</div>`; }
+}
+document.querySelector('[data-action="refresh-entity-kinds"]').addEventListener("click", refreshEntityKinds);
+
 // ---------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------
 checkConnection();
 refreshStatus();
-
