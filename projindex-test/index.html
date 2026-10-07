@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>projindex control panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-left">
+    <h1>projindex</h1>
+    <span class="subtitle">local control panel</span>
+  </div>
+  <div class="topbar-right">
+    <label for="backendUrl">Backend</label>
+    <input id="backendUrl" type="text" value="http://127.0.0.1:8765" spellcheck="false">
+    <span id="connDot" class="conn-dot" title="connection status"></span>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-tab="dashboard">Dashboard</button>
+  <button class="tab" data-tab="pipeline">Pipeline</button>
+  <button class="tab" data-tab="search">Search &amp; Ask</button>
+  <button class="tab" data-tab="connections">Connections</button>
+  <button class="tab" data-tab="review">Review</button>
+</nav>
+
+<main>
+
+  <!-- ============ DASHBOARD ============ -->
+  <section class="panel active" id="panel-dashboard">
+    <div class="panel-head">
+      <h2>Database status</h2>
+      <button class="btn ghost" data-action="refresh-status">Refresh</button>
+    </div>
+    <div class="stat-grid" id="statGrid">
+      <div class="stat-empty">Not connected yet.</div>
+    </div>
+    <div class="running-jobs" id="runningJobsBox" hidden>
+      <h3>Running jobs</h3>
+      <div id="runningJobsList"></div>
+    </div>
+  </section>
+
+  <!-- ============ PIPELINE ============ -->
+  <section class="panel" id="panel-pipeline">
+    <div class="panel-head"><h2>Pipeline stages</h2></div>
+    <p class="hint">Each stage picks up where the last one left off. Long stages run in the background — the card stays here and updates when it finishes.</p>
+
+    <div class="stage-grid">
+      <article class="stage-card" data-stage="scan">
+        <h3>Scan</h3>
+        <p>Walk configured folders, find new files.</p>
+        <label class="inline-check"><input type="checkbox" id="scanDryRun"> dry run (no writes)</label>
+        <button class="btn primary" data-action="run-scan">Run scan</button>
+        <div class="stage-status" data-status-for="scan"></div>
+      </article>
+
+      <article class="stage-card" data-stage="extract">
+        <h3>Extract</h3>
+        <p>Read text out of every pending file.</p>
+        <button class="btn primary" data-action="run-extract">Run extract</button>
+        <div class="stage-status" data-status-for="extract"></div>
+      </article>
+
+      <article class="stage-card" data-stage="segment">
+        <h3>Segment</h3>
+        <p>Split extracted text into bounded pieces.</p>
+        <button class="btn primary" data-action="run-segment">Run segment</button>
+        <div class="stage-status" data-status-for="segment"></div>
+      </article>
+
+      <article class="stage-card" data-stage="run">
+        <h3>Extract facts</h3>
+        <p>AI model pulls structured facts per segment.</p>
+        <label>limit <input type="number" id="runLimit" value="20" min="1" style="width:5em"></label>
+        <button class="btn primary" data-action="run-run">Run facts</button>
+        <div class="stage-status" data-status-for="run"></div>
+      </article>
+
+      <article class="stage-card" data-stage="rollup">
+        <h3>Rollup</h3>
+        <p>Roll segment facts up into file and project summaries.</p>
+        <label>limit <input type="number" id="rollupLimit" value="20" min="1" style="width:5em"></label>
+        <button class="btn primary" data-action="run-rollup">Run rollup</button>
+        <div class="stage-status" data-status-for="rollup"></div>
+      </article>
+
+      <article class="stage-card" data-stage="relations">
+        <h3>Build connections</h3>
+        <p>Rebuild the project&ndash;entity edge table from current data.</p>
+        <button class="btn primary" data-action="run-relations">Rebuild</button>
+        <div class="stage-status" data-status-for="relations"></div>
+      </article>
+    </div>
+  </section>
+
+  <!-- ============ SEARCH & ASK ============ -->
+  <section class="panel" id="panel-search">
+    <div class="panel-head"><h2>Search</h2></div>
+    <div class="search-bar">
+      <input id="searchQuery" type="text" placeholder='e.g. "load cell calibration"'>
+      <select id="searchMode">
+        <option value="fts">Full-text</option>
+        <option value="vector">Semantic</option>
+        <option value="hybrid">Hybrid</option>
+      </select>
+      <button class="btn primary" data-action="run-search">Search</button>
+    </div>
+    <div id="searchResults" class="results"></div>
+
+    <div class="panel-head" style="margin-top:28px"><h2>Ask</h2></div>
+    <p class="hint">Answers using only what's actually indexed, and says so when nothing relevant was found.</p>
+    <div class="search-bar">
+      <input id="askQuestion" type="text" placeholder="e.g. How is the load cell calibrated?">
+      <button class="btn primary" data-action="run-ask">Ask</button>
+    </div>
+    <div id="askResult" class="results"></div>
+  </section>
+
+  <!-- ============ CONNECTIONS ============ -->
+  <section class="panel" id="panel-connections">
+    <div class="panel-head"><h2>Connection web</h2></div>
+    <p class="hint">Pick two or more projects to see what connects them — shared suppliers, components, people — built live from the current database.</p>
+    <div class="conn-controls">
+      <input id="projectSearch" type="text" placeholder="Search project names&hellip;">
+      <div id="projectResults" class="project-results"></div>
+      <div id="selectedProjects" class="selected-projects"></div>
+      <div class="conn-options">
+        <label>max doc-freq <input type="number" id="maxDocFreq" value="5" min="0" style="width:4em"> <span class="hint-inline">(exclude entities linked to more than this many projects overall)</span></label>
+        <button class="btn primary" data-action="draw-graph">Draw graph</button>
+      </div>
+    </div>
+    <div class="graph-wrap">
+      <svg id="graphSvg" role="img" aria-label="Force-directed graph of selected projects and their shared connections"></svg>
+      <div class="legend" id="graphLegend" hidden>
+        <div class="row project-row"><span class="dot"></span> Project</div>
+        <div class="row"><span class="dot" style="background:var(--k-org)"></span> Org / supplier</div>
+        <div class="row"><span class="dot" style="background:var(--k-system)"></span> Component / system</div>
+        <div class="row"><span class="dot" style="background:var(--k-person)"></span> Person</div>
+        <div class="row"><span class="dot" style="background:var(--k-money)"></span> Cost field</div>
+        <div class="row"><span class="dot" style="background:var(--k-date)"></span> Date</div>
+        <div class="row"><span class="dot" style="background:var(--k-location)"></span> Location / part no.</div>
+      </div>
+      <div class="detail" id="graphDetail" hidden></div>
+    </div>
+  </section>
+
+  <!-- ============ REVIEW ============ -->
+  <section class="panel" id="panel-review">
+    <div class="panel-head">
+      <h2>Dropped facts</h2>
+      <button class="btn ghost" data-action="refresh-dropped">Refresh</button>
+    </div>
+    <p class="hint">Values the verbatim guard dropped — recover the ones it was wrong about, confirm the rest as genuine fabrications.</p>
+    <div id="droppedList" class="review-list"></div>
+
+    <div class="panel-head" style="margin-top:28px">
+      <h2>Fact conflicts</h2>
+      <div>
+        <button class="btn ghost" data-action="detect-conflicts">Detect conflicts</button>
+        <button class="btn ghost" data-action="refresh-conflicts">Refresh</button>
+      </div>
+    </div>
+    <p class="hint">Cases where a project's own files disagree about one fact. Resolution always needs a reason.</p>
+    <div id="conflictsList" class="review-list"></div>
+  </section>
+
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
+
